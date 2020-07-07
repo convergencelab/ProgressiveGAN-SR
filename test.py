@@ -125,6 +125,20 @@ train_ds = tfds.as_numpy(train_ds)
 sample = next(train_ds)['image'][0]
 hr, lr = preprocess(img=sample, lr_dim=(4, 4), upscale_factor=2)
 
+g = Prog_Generator()
+# print(g.layers)
+g.grow()
+g.grow()
+print(g.layers)
+
+input_shape = (1, 16, 16, 3)
+x = tf.random.normal(input_shape)
+y = g(x)
+
+
+#y = g(x).numpy()
+#print(y.shape)
+
 
 
 ### checking outputs of gan ###
@@ -140,12 +154,11 @@ error:
     got working after flatten: reshape was too small had to increase to 2048
 """
 # TODO: figure out why generator is not taking input properly
-ProGAN = ProGAN()
-ProGAN.grow()
+# ProGAN = ProGAN()
+# ProGAN.grow()
 # dis is working!
 # x = ProGAN.Discriminator(hr, training=True, fadein=True)
-
-
+"""
 x = ProGAN.Generator(lr, training=True, fadein=True)
 x = x.numpy().reshape(8,8,3)
 fig, ax = plt.subplots(1,4)
@@ -160,3 +173,22 @@ ax[2].set_title('high res')
 ax[3].set_title('ground truth')
 
 plt.show()
+"""
+"""
+### PROVE THAT the fadein and current model in fact share the same weights ###
+for i, layer in enumerate(ProGAN.Generator._fadein_model.trainable_variables):
+    try:
+        print(layer == ProGAN.Generator._current_model.trainable_variables[i])
+    except IndexError:
+        break
+
+# intially they do have all the same weights #
+
+### check id's ###
+for i, layer in enumerate(ProGAN.Generator._fadein_model.trainable_variables):
+    try:
+        print(id(layer) == id(ProGAN.Generator._current_model.trainable_variables[i]))
+    except IndexError:
+        break
+        
+"""

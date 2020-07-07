@@ -1,4 +1,6 @@
 import tensorflow as tf
+from tensorflow.keras.layers import UpSampling2D, Conv2D, LeakyReLU
+import numpy as np
 
 # Weighted Sum #
 class WeightedSum(tf.keras.layers.Add):
@@ -16,7 +18,7 @@ class WeightedSum(tf.keras.layers.Add):
         super(WeightedSum, self).__init__(**kwargs)
         # tensor variable
         #self.alpha = tf.keras.backend.variable(alpha, name='ws_alpha')
-        self.alpha = 0.0
+        self.alpha = alpha
 
     def set_alpha(self, alpha):
         """
@@ -123,3 +125,39 @@ def wasserstein_loss(y_true, y_pred):
     :return: wasserstein loss
     """
     return tf.keras.backend.mean(y_true * y_pred)
+
+class gen_block(tf.keras.layers.Layer):
+    """
+    each block is concerned with two things the output shape and
+    number of filters
+
+    --upsample will double our output dims every block.
+    """
+    def __init__(self, num_filters, reduce_filters, upsample=True, **kwargs):
+        super(gen_block, self).__init__(**kwargs)
+        # bool to remove upsamples where neccesary
+        self.upsample = upsample
+        # after 32x32 must start reducing filter size
+        if reduce_filters:
+            self.num_filters = int(num_filters / 2)
+        else:
+            self.num_filters = num_filters
+
+        self.upspl1 = UpSampling2D()
+        self.conv1 = Conv2D(filters=self.num_filters,
+                  kernel_size=(3,3),padding="same")
+        self.act1 = LeakyReLU(alpha=0.2)
+        self.conv2 = Conv2D(filters=self.num_filters,
+                   kernel_size=(3, 3), padding="same")
+        self.act2 = LeakyReLU(alpha=0.2)
+
+
+    def call(self, inputs):
+        x= inputs
+        if self.upsample:
+            x = self.upspl1(x)
+        x = self.conv1(x)
+        x = self.act1(x)
+        x = self.conv2(x)
+        x =  self.act2(x)
+        return x

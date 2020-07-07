@@ -332,14 +332,19 @@ save_c = 0
 NUM_CHECKPOINTS_DIV = int(epochs/4)
 
 ### TRAIN LOOP ###
+"""
+Two phases:
+    1. Fade in the 3-layer block
+    2. stabilize the network
+"""
 while input_dim <= TARGET_DIM:
     # train on given input dim #
     for epoch in range(epochs):
 
-        # train fadein #
+        # fadein #
         train(epoch, fadein=True, save_c=save_c, gan_output_res=input_dim)
 
-        # train straight through #
+        # stabilize#
         train(epoch, fadein=False, save_c=save_c, gan_output_res=input_dim)
 
     # grow input #
