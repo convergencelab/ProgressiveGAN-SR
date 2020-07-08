@@ -74,85 +74,95 @@ class Prog_Discriminator(prog_model):
         # call the parent constructor
         super(Prog_Discriminator, self).__init__(**kwargs)
         self.leakyrelu_alpha = leakyrelu_alpha
+
+        # intialize with 512
+        self.num_filters = 512
+
+        # to enable reduction of filter size
+        self.growth_phase = 0
+
         ### Construct base model ###
-        # input starts as 4x4x3
-        x = Input(shape=(4,4,3))
-        # conv 1x1
-        x_prime = Conv2D(64, (1, 1), padding='same', kernel_initializer='he_normal')(x)
-        x_prime = LeakyReLU(alpha=leakyrelu_alpha)(x_prime)
-        # conv 3x3 (output block)
-        x_prime = Conv2D(128, (3, 3), padding='same', kernel_initializer='he_normal')(x_prime)
-        x_prime = tf.keras.layers.BatchNormalization()(x_prime)
-        x_prime = LeakyReLU(alpha=leakyrelu_alpha)(x_prime)
+
+        # top to be filled with dis blocks
+        self.dis_blocks = []
+
+        # minibatch std dev layer
+        self.MinibatchStdev = MinibatchStdev()
+
+        # conv 3x3
+        self.conv4 = Conv2D(512, (3, 3), padding='same', kernel_initializer='he_normal')
+        self.act4 = LeakyReLU(alpha=leakyrelu_alpha)
+
         # conv 4x4
-        x_prime = Conv2D(128, (4, 4), padding='same', kernel_initializer='he_normal')(x_prime)
-        x_prime = tf.keras.layers.BatchNormalization()(x_prime)
-        x_prime = LeakyReLU(alpha=leakyrelu_alpha)(x_prime)
+        self.conv5 = Conv2D(512, (4, 4), padding='same', kernel_initializer='he_normal')
+        self.act5 = LeakyReLU(alpha=leakyrelu_alpha)
+
+
         # dense output layer
-        x_prime = Flatten()(x_prime)
-        x_prime = Dense(1)(x_prime)
-        self._base_model = Model(x, x_prime)
-        # compile base model with adam and mse #
-        self._base_model.compile(loss='mse', optimizer=Adam(lr=init_lr, beta_1=init_beta_1, beta_2=init_beta_2, epsilon=init_epsilon))
-        # target model
-        self._current_model = self._base_model
-        # fade in model
-        self._fadein_model = self._base_model
-        # bool: if in fadein transition == True
-        self._fadein_state = False
+        self.flatten = Flatten()
+        self.dense = Dense(1)
 
-    def grow(self, n_input_layers=3):
-        previous_model = self._current_model
-        input_shape = list(previous_model.input.shape)[1:]
+        # weighted output
+        self.weighted_sum = WeightedSum()
 
-        # new input shape will be double size:
-        # input shape comes in form [None, n, n, c]
-        input_shape_prime = input_shape
+    def grow(self):
+        num_filters = self.num_filters
+        # reduction in filters occurs after 3rd phase
+        increase_filters = self.growth_phase < 3
+        # insert new dis block to front of list
+        self.dis_blocks.insert(0,
+            dis_block(num_filters,
+                      increase_filters)
+        )
 
-        # double size of input
-        input_shape_prime[0] *= 2
-        input_shape_prime[1] *= 2
-        ### new layer ###
-        input_prime = Input(shape=input_shape_prime)
-        x = Conv2D(64, (1, 1), padding='same', kernel_initializer='he_normal')(input_prime)
-        x = LeakyReLU(alpha=self.leakyrelu_alpha)(x)
-        # define new block
-        x = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = LeakyReLU(alpha=self.leakyrelu_alpha)(x)
-        x = Conv2D(64, (3, 3), padding='same', kernel_initializer='he_normal')(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = LeakyReLU(alpha=self.leakyrelu_alpha)(x)
-        x = AveragePooling2D()(x)
-        block_new = x
 
-        # skip the input, 1x1 and activation for the old model
-        for i in range(n_input_layers, len(previous_model.layers)):
-            x = previous_model.layers[i](x)
-        # straight pass for once fade in is complete.
-        straight_pass = Model(input_prime, x)
+        self.growth_phase += 1
+        if increase_filters:
+            self.num_filters = int(self.num_filters * 2)
 
-        # Fade in model #
-        # downsamples by a factor of 2 ( invert upscale of input)
-        # i.e 8x8 -> 4x4
-        downsample = AveragePooling2D()(input_prime)
-        # connect old input processing to downsampled new input
-        block_old = previous_model.layers[1](downsample)
-        block_old = previous_model.layers[2](block_old)
-        # fade in output of old model input layer with new input
-        d = WeightedSum()([block_old, block_new])
-        # skip over input, 1x1 conv and activation
-        for i in range(n_input_layers, len(previous_model.layers)):
-            d = previous_model.layers[i](d)
-        fadein = Model(input_prime, d)
+        # disable following blocks input section
+        self.dis_blocks[1].is_top = False
 
-        # reassign models to continue growth
-        self._base_model = previous_model
-        self._current_model = straight_pass
-        self._fadein_model = fadein
+    def call(self, inputs):
+        # input block (this may be an erraneous implementation #
+        # inputs will potentially need to grow with the model #
+        x = inputs
+        # straight pass
+        x_prime = self.dis_blocks[0](x)
+        x_prime = self.dis_blocks[1](x_prime)
 
-        # going to be in fadein state right after growth call#
-        self._fadein_state = True
+        # pass through old block as if it is input
+        self.dis_blocks[1].is_top = True
+        x = self.dis_blocks[1](x)
+        
+        # pass through all layers except last layer
+        for i, block in enumerate(self.dis_blocks[2:]):
+            x = block(x)
+            x_prime = block(x_prime)
+            
+        # straight pass cont'd
+        x_prime = self.MinibatchStdev(x_prime)
+        x_prime = self.conv4(x_prime)
+        x_prime = self.act4(x_prime)
+        x_prime = self.conv5(x_prime)
+        x_prime = self.act5(x_prime)
+        x_prime = self.flatten(x_prime)
+        x_prime = self.dense(x_prime)
+
+
+        # old pass
+        x = self.MinibatchStdev(x)
+        x = self.conv4(x)
+        x = self.act4(x)
+        x = self.conv5(x)
+        x = self.act5(x)
+        x = self.flatten(x)
+        x = self.dense(x)
+
+        # fade in two outputs
+        x = self.weighted_sum([x, x_prime])
+
+        return x
 
 
 

@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.layers import UpSampling2D, Conv2D, LeakyReLU
+from tensorflow.keras.layers import UpSampling2D, Conv2D, LeakyReLU, AveragePooling2D
 import numpy as np
 
 # Weighted Sum #
@@ -160,4 +160,55 @@ class gen_block(tf.keras.layers.Layer):
         x = self.act1(x)
         x = self.conv2(x)
         x =  self.act2(x)
+        return x
+
+
+class dis_block(tf.keras.layers.Layer):
+    """
+    each block is concerned with two things the output shape and
+    number of filters
+
+    --downsample will halve our output dims every block.
+    """
+    def __init__(self, num_filters, increase_filters, is_top=True, **kwargs):
+        super(dis_block, self).__init__(**kwargs)
+        # if is top, will include the input layer for it
+        self.is_top = is_top
+
+
+        # input to be used when instance is the top of the model.
+        self.input_conv = Conv2D(num_filters, (1, 1), padding='same', kernel_initializer='he_normal')
+        self.input_act = LeakyReLU(alpha=0.2)
+
+        self.conv1 = Conv2D(filters=self.num_filters,
+                  kernel_size=(3,3),padding="same")
+        self.act1 = LeakyReLU(alpha=0.2)
+
+        # until 32x32 must double filter size
+        # filters increase after first conv layer
+        if increase_filters:
+            self.num_filters = int(num_filters * 2)
+        else:
+            self.num_filters = num_filters
+
+        self.conv2 = Conv2D(filters=self.num_filters,
+                   kernel_size=(3, 3), padding="same")
+        self.act2 = LeakyReLU(alpha=0.2)
+
+        # uses average pooling for downsample
+        self.dnspl1 = AveragePooling2D()
+
+
+    def call(self, inputs):
+        x= inputs
+        if self.is_top:
+            x = self.input_conv(x)
+            x = self.input_act(x)
+
+        x = self.conv1(x)
+        x = self.act1(x)
+        x = self.conv2(x)
+        x = self.act2(x)
+        x = self.dnspl1(x)
+
         return x

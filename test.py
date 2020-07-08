@@ -125,15 +125,18 @@ train_ds = tfds.as_numpy(train_ds)
 sample = next(train_ds)['image'][0]
 hr, lr = preprocess(img=sample, lr_dim=(4, 4), upscale_factor=2)
 
-g = Prog_Generator()
+d = dis_block(num_filters=128, increase_filters=True)
+# g = Prog_Generator()
 # print(g.layers)
-g.grow()
-g.grow()
-print(g.layers)
+#g.grow()
+#g.grow()
+#print(g.layers)
 
-input_shape = (1, 16, 16, 3)
+input_shape = (1, 128, 128, 128)
 x = tf.random.normal(input_shape)
-y = g(x)
+y = d(x)
+print(y.shape)
+#y = g(x)
 
 
 #y = g(x).numpy()
