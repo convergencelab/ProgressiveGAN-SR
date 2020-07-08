@@ -125,24 +125,28 @@ train_ds = tfds.as_numpy(train_ds)
 sample = next(train_ds)['image'][0]
 hr, lr = preprocess(img=sample, lr_dim=(4, 4), upscale_factor=2)
 
-d = dis_block(num_filters=128, increase_filters=True)
-# g = Prog_Generator()
-# print(g.layers)
-#g.grow()
-#g.grow()
-#print(g.layers)
+#d = dis_block(num_filters=128, increase_filters=True)
+#d = Prog_Discriminator()
+#d.grow()
+#d.grow()
+pg = ProGAN()
+pg.grow()
+pg.grow()
+pg.grow()
 
-input_shape = (1, 128, 128, 128)
+input_shape = (1, 32, 32, 3)
 x = tf.random.normal(input_shape)
-y = d(x)
-print(y.shape)
-#y = g(x)
+y = pg.Generator(x)
+print("gen pass: ", y.shape)
+y_prime = pg.Discriminator(y)
+print("discrim_pass: ", y_prime.shape)
+
+
+
 
 
 #y = g(x).numpy()
 #print(y.shape)
-
-
 
 ### checking outputs of gan ###
 """
