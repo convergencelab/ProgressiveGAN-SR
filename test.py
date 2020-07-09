@@ -129,15 +129,16 @@ hr, lr = preprocess(img=sample, lr_dim=(4, 4), upscale_factor=2)
 #d = Prog_Discriminator()
 #d.grow()
 #d.grow()
+
 pg = ProGAN()
-pg.grow()
-pg.grow()
-pg.grow()
-pg.grow()
-pg.grow()
+#pg.grow()
+#pg.grow()
+#pg.grow()
+#pg.grow()
+#pg.grow()
 
 
-input_shape = (1, 512, 512, 3)
+input_shape = (1, 32, 32, 3)
 x = tf.random.normal(input_shape)
 y = pg.Generator(x)
 print("gen pass: ", y.shape)
@@ -145,6 +146,13 @@ y_prime = pg.Discriminator(y)
 print("discrim_pass: ", y_prime.shape)
 
 d = pg.Discriminator
+
+# d = dis_block(num_filters=512, decrease_filters=True)
+# print(d.input_act.trainable, d.input_conv.trainable)
+
+
+# d.deactivate_input()
+# print(d.input_act.trainable, d.input_conv.trainable)
 
 
 

@@ -163,6 +163,17 @@ class gen_block(tf.keras.layers.Layer):
         self.act_last2 = LeakyReLU(alpha=0.2)
         self.RGB_out = Conv2D(3, (1, 1), padding='same', kernel_initializer='he_normal')
 
+    def deactivate_output(self):
+        """
+        This ensures that we are not training the outputs once this output layer essentially
+        deprecates
+        """
+        self.conv_last1.trainable = False
+        self.act_last1.trainable = False
+        self.conv_last2.trainable = False
+        self.act_last2.trainable = False
+        self.RGB_out.trainable = False
+
     def call(self, inputs):
         x= inputs
         if self.upsample:
@@ -220,6 +231,12 @@ class dis_block(tf.keras.layers.Layer):
         # uses average pooling for downsample
         self.dnspl1 = AveragePooling2D()
 
+    def deactivate_input(self):
+        """
+        once old pass in
+        """
+        self.input_conv.trainable = False
+        self.input_act.trainable = False
 
     def call(self, inputs):
         x= inputs

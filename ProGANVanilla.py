@@ -90,8 +90,9 @@ class Prog_Discriminator(Model):
 
         # disable following blocks input section
         if self.growth_phase > 1:
-            # TODO: actually remove top here!
             self.dis_blocks[1].is_top = False
+            # disable training for input layers in block.
+            self.dis_blocks[1].deactivate_input()
 
     def call(self, inputs):
         # input block (this may be an erraneous implementation #
@@ -106,6 +107,7 @@ class Prog_Discriminator(Model):
             self.dis_blocks[1].is_top = True
             x = self.dis_blocks[1](x)
             self.dis_blocks[1].is_top = False
+
             # pass through all layers except last layer
             for i, block in enumerate(self.dis_blocks[2:]):
                 x = block(x)
@@ -220,8 +222,9 @@ class Prog_Generator(Model):
 
         if self.growth_phase > 1:
             # new block so remove end block from prev block
-            # TODO: actually remove end here!
             self.gen_blocks[-2].is_end = False
+            # ensure we are not training params we should not be
+            self.gen_blocks[-2].deactivate_output()
 
     def call(self, inputs):
         x = inputs
