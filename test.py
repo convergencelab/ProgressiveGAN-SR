@@ -133,14 +133,18 @@ pg = ProGAN()
 pg.grow()
 pg.grow()
 pg.grow()
+pg.grow()
+pg.grow()
 
-input_shape = (1, 32, 32, 3)
+
+input_shape = (1, 512, 512, 3)
 x = tf.random.normal(input_shape)
 y = pg.Generator(x)
 print("gen pass: ", y.shape)
 y_prime = pg.Discriminator(y)
 print("discrim_pass: ", y_prime.shape)
 
+d = pg.Discriminator
 
 
 

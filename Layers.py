@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras.layers import UpSampling2D, Conv2D, LeakyReLU, AveragePooling2D
 import numpy as np
+# TODO: figure out how to actually remove layers from model so when we drop them, we do not continue to train them
 
 # Weighted Sum #
 class WeightedSum(tf.keras.layers.Add):
@@ -156,11 +157,11 @@ class gen_block(tf.keras.layers.Layer):
         self.act2 = LeakyReLU(alpha=0.2)
 
         # for if last
-        self.conv_last1 = Conv2D(16, (3, 3), padding='same', kernel_initializer=self.kernel_initializer)
-        self.act_last1 = LeakyReLU(alpha=self.leakyrelu_alpha)
-        self.conv_last2 = Conv2D(16, (3, 3), padding='same', kernel_initializer=self.kernel_initializer)
-        self.act_last2 = LeakyReLU(alpha=self.leakyrelu_alpha)
-        self.RGB_out = Conv2D(3, (1, 1), padding='same', kernel_initializer=self.kernel_initializer)
+        self.conv_last1 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal')
+        self.act_last1 = LeakyReLU(alpha=0.2)
+        self.conv_last2 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal')
+        self.act_last2 = LeakyReLU(alpha=0.2)
+        self.RGB_out = Conv2D(3, (1, 1), padding='same', kernel_initializer='he_normal')
 
     def call(self, inputs):
         x= inputs
@@ -170,6 +171,14 @@ class gen_block(tf.keras.layers.Layer):
         x = self.act1(x)
         x = self.conv2(x)
         x = self.act2(x)
+
+        if self.is_end:
+            x = self.conv_last1(x)
+            x = self.act_last1(x)
+            x = self.conv_last2(x)
+            x = self.act_last2(x)
+            x = self.RGB_out(x)
+
         return x
 
 
@@ -180,24 +189,29 @@ class dis_block(tf.keras.layers.Layer):
 
     --downsample will halve our output dims every block.
     """
-    def __init__(self, num_filters, increase_filters, is_top=True, **kwargs):
+    def __init__(self, num_filters, decrease_filters, is_top=True, **kwargs):
         super(dis_block, self).__init__(**kwargs)
         # if is top, will include the input layer for it
         self.is_top = is_top
         self.num_filters = num_filters
 
+        # filters increase after first conv layer
+        if decrease_filters:
+            self.num_filters = int(self.num_filters / 2)
+
         # input to be used when instance is the top of the model.
         self.input_conv = Conv2D(self.num_filters, (1, 1), padding='same', kernel_initializer='he_normal')
         self.input_act = LeakyReLU(alpha=0.2)
+        # until 32x32 must double filter size
+
 
         self.conv1 = Conv2D(filters=self.num_filters,
                   kernel_size=(3,3),padding="same")
         self.act1 = LeakyReLU(alpha=0.2)
 
-        # until 32x32 must double filter size
-        # filters increase after first conv layer
-        if increase_filters:
-            self.num_filters = int(self.num_filters / 2)
+        # must scale back up
+        if decrease_filters:
+            self.num_filters = int(self.num_filters * 2)
 
         self.conv2 = Conv2D(filters=self.num_filters,
                    kernel_size=(3, 3), padding="same")

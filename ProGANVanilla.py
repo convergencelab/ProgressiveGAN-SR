@@ -77,19 +77,20 @@ class Prog_Discriminator(Model):
     def grow(self):
         num_filters = self.num_filters
         # reduction in filters occurs after 3rd phase
-        increase_filters = self.growth_phase > 3
+        decrease_filters = self.growth_phase > 2
         # insert new dis block to front of list
         self.dis_blocks.insert(0,
             dis_block(num_filters,
-                      increase_filters)
+                      decrease_filters)
         )
 
         self.growth_phase += 1
-        if increase_filters:
+        if decrease_filters:
             self.num_filters = int(self.num_filters / 2)
 
         # disable following blocks input section
         if self.growth_phase > 1:
+            # TODO: actually remove top here!
             self.dis_blocks[1].is_top = False
 
     def call(self, inputs):
@@ -101,11 +102,10 @@ class Prog_Discriminator(Model):
             # straight pass
             x_prime = self.dis_blocks[0](x)
             x_prime = self.dis_blocks[1](x_prime)
-
             # pass through old block as if it is input
             self.dis_blocks[1].is_top = True
             x = self.dis_blocks[1](x)
-
+            self.dis_blocks[1].is_top = False
             # pass through all layers except last layer
             for i, block in enumerate(self.dis_blocks[2:]):
                 x = block(x)
@@ -119,6 +119,7 @@ class Prog_Discriminator(Model):
             x = self.input_act(x)
 
         x = self.input_dnsmpl(x)
+
         # straight pass cont'd
         x_prime = self.MinibatchStdev(x_prime)
         x_prime = self.conv1(x_prime)
@@ -202,20 +203,25 @@ class Prog_Generator(Model):
 
         num_filters = self.num_filters
         # reduction in filters occurs after 3rd phase
-        reduce_filters = self.growth_phase > 2
+        reduce_filters = self.growth_phase < 2
         # add new gen block to model
         self.gen_blocks.append(
                                 gen_block(num_filters,
                                           reduce_filters)
         )
         # remove upsamples as growth occurs
-        # this will help compensate for input growth
+        # this will help compensate for input growth (img size increase)
         if self.growth_phase >= 1:
             self.gen_blocks[self.growth_phase-1].upsample = False
 
         self.growth_phase += 1
         if reduce_filters:
             self.num_filters= int(self.num_filters/2)
+
+        if self.growth_phase > 1:
+            # new block so remove end block from prev block
+            # TODO: actually remove end here!
+            self.gen_blocks[-2].is_end = False
 
     def call(self, inputs):
         x = inputs
@@ -229,24 +235,19 @@ class Prog_Generator(Model):
             x = block(x)
 
         # intializes with growth period so always in growth phase
-        # straight pass
+        # straight pass, this will be RGBout
         x_prime = self.gen_blocks[-1](x)
-        print("x': ", x_prime.shape)
-        #x_prime = self.conv_last1(x_prime)
-        #x_prime = self.conv_last2(x_prime)
-        #x_prime = self.act_last2(x_prime)
-        #x_prime = self.RGB_out(x_prime)
+
 
         # old pass
         x = self.upspl_last(x)
-        print("x: ", x.shape)
         x = self.conv_last1(x)
         x = self.conv_last2(x)
         x = self.act_last2(x)
         x = self.RGB_out(x)
 
         # fade in two outputs
-        #x = self.weighted_sum([x, x_prime])
+        x = self.weighted_sum([x, x_prime])
 
         return x
 
