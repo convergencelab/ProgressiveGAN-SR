@@ -16,7 +16,7 @@ epochs = 256
 
 # image #
 UP_SAMPLE = 2 # factor for upsample
-START_INPUT_DIM = 2 # start with 2x2 input -> initialize with growth phase to 4x4 (so really 4)
+START_INPUT_DIM = 8 # start with 8x8 input -> initialize with growth phase to 4x4 (so really 4)
 TARGET_DIM = 256 # full image size
 
 # Adam #
@@ -134,11 +134,11 @@ if not os.path.isdir('./checkpoints'):
 
 ### generator train step ###
 @tf.function
-def gen_train_step(high_res, low_res, fadein, gan_output_res):
+def gen_train_step(high_res, low_res, gan_output_res):
   with tf.GradientTape() as tape:
     # training=True is only needed if there are layers with different
     # behavior during training versus inference (e.g. Dropout).
-    predictions = ProGAN.Generator(low_res, training=True, fadein=fadein)
+    predictions = ProGAN.Generator(low_res, training=True)
     # mean squared error in prediction
     m_loss = tf.keras.losses.MSE(high_res, predictions)
     # we will only incorporate perceptual loss once we reach the dimensions of which the
@@ -181,7 +181,7 @@ def gen_train_step(high_res, low_res, fadein, gan_output_res):
 
 ### discriminator train step ###
 @tf.function
-def dis_train_step(high_res, low_res, step, fadein):
+def dis_train_step(high_res, low_res, step):
     with tf.GradientTape() as tape:
         # discrim is a simple conv that performs binary classification
         # either SR or HR
@@ -189,11 +189,11 @@ def dis_train_step(high_res, low_res, step, fadein):
         label = step % 2
         # 0 for generated, 1 for true image
         if label:
-            x = ProGAN.Generator(low_res, training=False, fadein=fadein)
+            x = ProGAN.Generator(low_res, training=False)
         else:
             x = high_res
         # predict on gen output
-        predictions = ProGAN.Discriminator(x, training=True, fadein=fadein)
+        predictions = ProGAN.Discriminator(x, training=True)
         loss = discrim_loss(high_res, predictions)
 
     # update either current or fadein
@@ -217,9 +217,9 @@ def dis_train_step(high_res, low_res, step, fadein):
 
 ### generator test step ###
 @tf.function
-def gen_test_step(high_res, low_res, fadein):
+def gen_test_step(high_res, low_res):
   # feed test sample in
-  predictions = ProGAN.Generator(low_res, training=False, fadein=fadein)
+  predictions = ProGAN.Generator(low_res, training=False)
   t_loss = gen_loss(high_res, predictions)
 
   # update metrics
@@ -234,16 +234,16 @@ def gen_test_step(high_res, low_res, fadein):
 
 ### discriminator test step ###
 @tf.function
-def dis_test_step(high_res, low_res, step, fadein):
+def dis_test_step(high_res, low_res, step):
     # feed test sample in
     # use super res on even, true image on odd steps #
     label = step % 2
     if label:
-        x = ProGAN.Generator(low_res, training=False, fadein=fadein)
+        x = ProGAN.Generator(low_res, training=False)
     else:
         x = high_res
     # predict on gen output
-    predictions = ProGAN.Discriminator(x, training=False, fadein=fadein)
+    predictions = ProGAN.Discriminator(x, training=False)
     t_loss = discrim_loss(high_res, predictions)
 
     # update metrics
@@ -257,7 +257,7 @@ def dis_test_step(high_res, low_res, step, fadein):
 
 
 ### TRAIN ###
-def train(epoch, fadein, save_c, gan_output_res):
+def train(epoch, save_c, gan_output_res):
     """
     train step
     :param epoch: int epoch
@@ -281,37 +281,33 @@ def train(epoch, fadein, save_c, gan_output_res):
         # apply alpha in training #
         # data structured: dataset -> batch -> sample
         for i, batch in enumerate(train_ds):
-            for j, sample in enumerate(batch['image']):
-                if fadein:
-                    # update fade in for given step #
-                    update_fadein(i)
+            for j, sample in enumerate(batch['image'].astype('int32')):
+
 
                 high_res, low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
-                gen_train_step(high_res, low_res, fadein, gan_output_res)
+                gen_train_step(high_res, low_res, gan_output_res)
                 with image_summary_writer.as_default():
                     tf.summary.image("Ground Truth", sample[np.newaxis, ...], step=0)
 
         for batch in test_ds:
             for sample in batch:
                 test_high_res, test_low_res = preprocess(sample['image'], (input_dim, input_dim), UP_SAMPLE)
-                gen_test_step(test_high_res, test_low_res, fadein)
+                gen_test_step(test_high_res, test_low_res)
 
     else:
         ### train discriminator on odd epochs ###
         # data structured: dataset -> batch -> sample
         for i, batch in enumerate(train_ds):
-            for j, sample in enumerate(batch['image']):
-                if fadein:
-                    # update fade in for given step #
-                    update_fadein(i+j)
-                high_res, low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
-                dis_train_step(high_res, low_res, i, fadein)
+            for j, sample in enumerate(batch['image'].astype('int32')):
+
+                high_res, low_res = preprocess(sample['image'], (input_dim, input_dim), UP_SAMPLE)
+                dis_train_step(high_res, low_res, i)
 
 
         for i, batch in enumerate(test_ds):
-            for j, sample in enumerate(batch['image']):
+            for j, sample in enumerate(batch['image'].astype('int32')):
                 test_high_res, test_low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
-                dis_test_step(test_high_res, test_low_res, i, fadein)
+                dis_test_step(test_high_res, test_low_res, i)
 
 
     ### save weights ###
@@ -323,9 +319,6 @@ def train(epoch, fadein, save_c, gan_output_res):
 # initialize input_dim
 input_dim = START_INPUT_DIM
 
-# intialize growth phase (input = 2 -> input = 4)
-ProGAN.grow()
-input_dim*=UP_SAMPLE
 
 # save count for checkpoints #
 save_c = 0
@@ -342,10 +335,10 @@ while input_dim <= TARGET_DIM:
     for epoch in range(epochs):
 
         # fadein #
-        train(epoch, fadein=True, save_c=save_c, gan_output_res=input_dim)
+        train(epoch, save_c=save_c, gan_output_res=input_dim)
 
         # stabilize#
-        train(epoch, fadein=False, save_c=save_c, gan_output_res=input_dim)
+        train(epoch, save_c=save_c, gan_output_res=input_dim)
 
     # grow input #
     ProGAN.grow() # upsamples by factor of 2
@@ -353,6 +346,8 @@ while input_dim <= TARGET_DIM:
     # once vgg is used, grow! #
     if input_dim >= 32:
         vgg.grow()
+    # reset alpha back to zero
+    ProGAN.set_alpha(0.0)
 
     # increase input by upsample factor (2)
     input_dim*=UP_SAMPLE

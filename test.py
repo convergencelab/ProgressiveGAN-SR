@@ -131,7 +131,7 @@ hr, lr = preprocess(img=sample, lr_dim=(4, 4), upscale_factor=2)
 #d.grow()
 
 pg = ProGAN()
-#pg.grow()
+pg.grow()
 #pg.grow()
 #pg.grow()
 #pg.grow()
