@@ -117,94 +117,99 @@ dis_test_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(name='dis_test_ac
 
 # initialize logs #
 current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-gen_train_log_dir = './logs/gradient_tape/' + current_time + '/gen_train'
-gen_test_log_dir = './logs/gradient_tape/' + current_time + '/gen_test'
-dis_train_log_dir = './logs/gradient_tape/' + current_time + '/dis_train'
-dis_test_log_dir = './logs/gradient_tape/' + current_time + '/dis_test'
+gen_train_log_dir = '../logs/gradient_tape/' + current_time + '/gen_train'
+gen_test_log_dir = '../logs/gradient_tape/' + current_time + '/gen_test'
+dis_train_log_dir = '../logs/gradient_tape/' + current_time + '/dis_train'
+dis_test_log_dir = '../logs/gradient_tape/' + current_time + '/dis_test'
 
 gen_train_summary_writer = tf.summary.create_file_writer(gen_train_log_dir)
 gen_test_summary_writer = tf.summary.create_file_writer(gen_test_log_dir)
 dis_train_summary_writer = tf.summary.create_file_writer(dis_train_log_dir)
 dis_test_summary_writer = tf.summary.create_file_writer(dis_test_log_dir)
-image_summary_writer = tf.summary.create_file_writer('./logs/gradient_tape/' + current_time + '/images')
+image_summary_writer = tf.summary.create_file_writer('../logs/gradient_tape/' + current_time + '/images')
 
 ### Weights Dir ###
-if not os.path.isdir('./checkpoints'):
-    os.mkdir('./checkpoints')
+if not os.path.isdir('../checkpoints'):
+    os.mkdir('../checkpoints')
 
 ### generator train step ###
 @tf.function
-def gen_train_step(high_res, low_res, gan_output_res):
-  with tf.GradientTape() as tape:
-    # training=True is only needed if there are layers with different
-    # behavior during training versus inference (e.g. Dropout).
-    predictions = ProGAN.Generator(low_res, training=True)
-    # mean squared error in prediction
-    m_loss = tf.keras.losses.MSE(high_res, predictions)
-    # we will only incorporate perceptual loss once we reach the dimensions of which the
-    # vgg will accept. (32x32)
-    if gan_output_res >= 32:
-        # content loss
-        v_pass = vgg(high_res)
-        v_loss = tf.keras.losses.MSE(v_pass, predictions)
-        # GAN loss + mse loss + feature loss
-        loss = gen_loss(high_res, predictions) + v_loss + m_loss
+def gen_train_step(batch, gan_output_res):
+    """
+    high res image
+    low res image
+    current output res of GAN to determine wether or not we should use the VGG
+    """
+    for j, sample in enumerate(batch['image']):
+        high_res, low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
+        gen_train_step(high_res, low_res, gan_output_res)
+        with tf.GradientTape() as tape:
+            # training=True is only needed if there are layers with different
+            # behavior during training versus inference (e.g. Dropout).
+            predictions = ProGAN.Generator(low_res, training=True)
+            # mean squared error in prediction
+            m_loss = tf.keras.losses.MSE(high_res, predictions)
+            # we will only incorporate perceptual loss once we reach the dimensions of which the
+            # vgg will accept. (32x32)
+            if gan_output_res >= 32:
+                # content loss
+                v_pass = vgg(high_res)
+                v_loss = tf.keras.losses.MSE(v_pass, predictions)
+                # GAN loss + mse loss + feature loss
+                loss = gen_loss(high_res, predictions) + v_loss + m_loss
 
-    else:
-        loss = gen_loss(high_res, predictions)  + m_loss
+            else:
+                # without use of content loss ...
+                loss = gen_loss(high_res, predictions) + m_loss
+        # write to tensorboard
+        with image_summary_writer.as_default():
+            tf.summary.image("Ground Truth", sample[np.newaxis, ...], step=0)
 
-  # update either current or fadein
-  if fadein:
-      model = ProGAN.Generator._fadein_model
-  else:
-      model = ProGAN.Generator._current_model
+        # apply gradients after every batch
+        gradients = tape.gradient(loss, ProGAN.Generator.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, ProGAN.Generator.trainable_variables))
 
-  # apply gradients
-  gradients = tape.gradient(loss, model.trainable_variables)
-  optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+        # update metrics after every batch
+        gen_train_loss(loss)
 
-  # update metrics
-  gen_train_loss(loss)
+        gen_train_accuracy(high_res, predictions)
 
-  gen_train_accuracy(high_res, predictions)
+        # write to gen_train-log #
+        with gen_train_summary_writer.as_default():
+          tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=epoch)
+          tf.summary.scalar('gen_train_accuracy', gen_train_accuracy.result(), step=epoch)
 
-  # write to gen_train-log #
-  with gen_train_summary_writer.as_default():
-      tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=epoch)
-      tf.summary.scalar('gen_train_accuracy', gen_train_accuracy.result(), step=epoch)
-
-  with image_summary_writer.as_default():
-      tf.summary.image("Generated", predictions, step=0)
-      tf.summary.image("high res", high_res, step=0)
-      tf.summary.image("low res", low_res, step=0)
+        with image_summary_writer.as_default():
+          tf.summary.image("Generated", predictions, step=0)
+          tf.summary.image("high res", high_res, step=0)
+          tf.summary.image("low res", low_res, step=0)
 
 
 ### discriminator train step ###
 @tf.function
-def dis_train_step(high_res, low_res, step):
-    with tf.GradientTape() as tape:
-        # discrim is a simple conv that performs binary classification
-        # either SR or HR
-        # use super res on even, true image on odd steps #
-        label = step % 2
-        # 0 for generated, 1 for true image
-        if label:
-            x = ProGAN.Generator(low_res, training=False)
-        else:
-            x = high_res
-        # predict on gen output
-        predictions = ProGAN.Discriminator(x, training=True)
-        loss = discrim_loss(high_res, predictions)
+def dis_train_step(batch, step):
+    for j, sample in enumerate(batch['image']):
+        high_res, low_res = preprocess(sample['image'], (input_dim, input_dim), UP_SAMPLE)
+        dis_train_step(high_res, low_res, step)
+        with tf.GradientTape() as tape:
+            # discrim is a simple conv that performs binary classification
+            # either SR or HR
+            # use super res on even, true image on odd steps #
+            # this allows for discrim to see both generated and true images
+            label = step % 2
+            # 0 for generated, 1 for true image
+            if label:
+                x = ProGAN.Generator(low_res, training=False)
+            else:
+                x = high_res
+            # predict on gen output
+            predictions = ProGAN.Discriminator(x, training=True)
+            loss = discrim_loss(high_res, predictions)
 
-    # update either current or fadein
-    if fadein:
-        model = ProGAN.Discriminator._fadein_model
-    else:
-        model = ProGAN.Discriminator._current_model
 
     # apply gradients
-    gradients = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    gradients = tape.gradient(loss, ProGAN.Discriminator.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, ProGAN.Discriminator.trainable_variables))
 
     # update metrics
     dis_train_loss(loss)
@@ -217,38 +222,48 @@ def dis_train_step(high_res, low_res, step):
 
 ### generator test step ###
 @tf.function
-def gen_test_step(high_res, low_res):
-  # feed test sample in
-  predictions = ProGAN.Generator(low_res, training=False)
-  t_loss = gen_loss(high_res, predictions)
+def gen_test_step(batch):
+    """
+    gen test step for a given batch
+    """
+    for sample in batch:
+        test_high_res, test_low_res = preprocess(sample['image'], (input_dim, input_dim), UP_SAMPLE)
+        gen_test_step(test_high_res, test_low_res)
 
-  # update metrics
-  gen_test_loss(t_loss)
-  gen_test_accuracy(high_res, predictions)
+        # feed test sample in
+        predictions = ProGAN.Generator(test_low_res, training=False)
+        t_loss = gen_loss(test_high_res, predictions)
 
-  # write to gen_test-log #
-  with gen_test_summary_writer.as_default():
-      tf.summary.scalar('gen_test_loss', gen_test_loss.result(), step=epoch)
-      tf.summary.scalar('gen_test_accuracy', gen_test_accuracy.result(), step=epoch)
+        # update metrics
+        gen_test_loss(t_loss)
+        gen_test_accuracy(test_high_res, predictions)
+
+    # write to gen_test-log #
+    with gen_test_summary_writer.as_default():
+        tf.summary.scalar('gen_test_loss', gen_test_loss.result(), step=epoch)
+        tf.summary.scalar('gen_test_accuracy', gen_test_accuracy.result(), step=epoch)
 
 
 ### discriminator test step ###
 @tf.function
-def dis_test_step(high_res, low_res, step):
-    # feed test sample in
-    # use super res on even, true image on odd steps #
-    label = step % 2
-    if label:
-        x = ProGAN.Generator(low_res, training=False)
-    else:
-        x = high_res
-    # predict on gen output
-    predictions = ProGAN.Discriminator(x, training=False)
-    t_loss = discrim_loss(high_res, predictions)
+def dis_test_step(batch, step):
+    for j, sample in enumerate(batch['image']):
+        test_high_res, test_low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
+        dis_test_step(test_high_res, test_low_res, step)
+        # feed test sample in
+        # use super res on even, true image on odd steps #
+        label = step % 2
+        if label:
+            x = ProGAN.Generator(test_low_res, training=False)
+        else:
+            x = test_high_res
+        # predict on gen output
+        predictions = ProGAN.Discriminator(x, training=False)
+        t_loss = discrim_loss(test_high_res, predictions)
 
-    # update metrics
-    dis_test_loss(t_loss)
-    dis_test_accuracy(label, predictions)
+        # update metrics
+        dis_test_loss(t_loss)
+        dis_test_accuracy(label, predictions)
 
     # write to gen_test-log #
     with dis_test_summary_writer.as_default():
@@ -281,33 +296,20 @@ def train(epoch, save_c, gan_output_res):
         # apply alpha in training #
         # data structured: dataset -> batch -> sample
         for i, batch in enumerate(train_ds):
-            for j, sample in enumerate(batch['image'].astype('int32')):
-
-
-                high_res, low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
-                gen_train_step(high_res, low_res, gan_output_res)
-                with image_summary_writer.as_default():
-                    tf.summary.image("Ground Truth", sample[np.newaxis, ...], step=0)
+            gen_train_step(batch, gan_output_res)
 
         for batch in test_ds:
-            for sample in batch:
-                test_high_res, test_low_res = preprocess(sample['image'], (input_dim, input_dim), UP_SAMPLE)
-                gen_test_step(test_high_res, test_low_res)
+            gen_test_step(batch)
 
     else:
         ### train discriminator on odd epochs ###
         # data structured: dataset -> batch -> sample
         for i, batch in enumerate(train_ds):
-            for j, sample in enumerate(batch['image'].astype('int32')):
-
-                high_res, low_res = preprocess(sample['image'], (input_dim, input_dim), UP_SAMPLE)
-                dis_train_step(high_res, low_res, i)
+            dis_train_step(batch, i)
 
 
         for i, batch in enumerate(test_ds):
-            for j, sample in enumerate(batch['image'].astype('int32')):
-                test_high_res, test_low_res = preprocess(sample, (input_dim, input_dim), UP_SAMPLE)
-                dis_test_step(test_high_res, test_low_res, i)
+            dis_test_step(batch, i)
 
 
     ### save weights ###
