@@ -254,7 +254,7 @@ class Prog_Generator(Model):
 
         return x
 
-class ProGAN():
+class ProGAN(object):
     def __init__(self,
                  **kwargs
                  ):

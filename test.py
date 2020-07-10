@@ -1,7 +1,24 @@
 """
 testing PL VGG-19 to have adjusted input sizes
 """
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import numpy as np
+from ProGANVanilla import *
+from Perceptual_loss_VGG import PROG_PL_VGG19
+from util import *
+pg = ProGAN()
+batch_size = 2
+(x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+x_train = x_train.reshape(60000, 28, 28, 1).astype('float32')
+train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
+train_dataset = train_dataset.shuffle(buffer_size=1024).batch(batch_size)
+for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
+    logits = pg.Generator(x_batch_train, training=True)
+    break
 
+"""
 from ProGANVanilla import *
 from Perceptual_loss_VGG import PROG_PL_VGG19
 from util import *
@@ -10,7 +27,8 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import matplotlib.pyplot as plt
 import numpy as np
-"""
+
+
 vgg = PROG_PL_VGG19(input_dims=(32, 32, 3),
                     layers_to_extract=[0, 1, 2],
                     load_weights='imagenet',
@@ -93,7 +111,7 @@ This dataset requires you to download the source data manually
 into download_config.manual_dir (defaults to ~/tensorflow_datasets/manual/):
 
 Note: this dataset does not have a test/train split.
-"""
+
 # load data #
 data, info = tfds.load('resisc45', split="train", with_info=True)
 # visualize data #
@@ -131,7 +149,18 @@ hr, lr = preprocess(img=sample, lr_dim=(4, 4), upscale_factor=2)
 #d.grow()
 
 pg = ProGAN()
-pg.grow()
+
+x_p = []
+x = next(test_ds)['image']
+for i in x:
+    lr, hr = preprocess(i, (4,4), 2)
+    x_p.append(lr)
+test_dataset = tf.data.Dataset.from_tensor_slices(np.array(x_p))
+#x = downsample(x, (4, 4), 2)
+
+y = pg.Generator(test_dataset)
+
+#pg.grow()
 #pg.grow()
 #pg.grow()
 #pg.grow()
@@ -146,6 +175,7 @@ y_prime = pg.Discriminator(y)
 print("discrim_pass: ", y_prime.shape)
 
 d = pg.Discriminator
+"""
 
 # d = dis_block(num_filters=512, decrease_filters=True)
 # print(d.input_act.trainable, d.input_conv.trainable)
@@ -154,13 +184,14 @@ d = pg.Discriminator
 # d.deactivate_input()
 # print(d.input_act.trainable, d.input_conv.trainable)
 
-
+"""
 
 
 #y = g(x).numpy()
 #print(y.shape)
 
 ### checking outputs of gan ###
+"""
 """
 error:
     ValueError: Cannot reshape a tensor with 32768 elements to shape [1,4,4,128] (2048 elements) 
