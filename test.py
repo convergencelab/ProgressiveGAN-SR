@@ -9,7 +9,13 @@ from ProGANVanilla import *
 from Perceptual_loss_VGG import PROG_PL_VGG19
 from util import *
 pg = ProGAN()
+input_shape = (16, 8, 8, 3)
+x = tf.random.normal(input_shape)
+y = pg.Generator(x, training=True)
+
+"""
 batch_size = 2
+
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = x_train.reshape(60000, 28, 28, 1).astype('float32')
 train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
@@ -17,7 +23,7 @@ train_dataset = train_dataset.shuffle(buffer_size=1024).batch(batch_size)
 for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
     logits = pg.Generator(x_batch_train, training=True)
     break
-
+"""
 """
 from ProGANVanilla import *
 from Perceptual_loss_VGG import PROG_PL_VGG19
