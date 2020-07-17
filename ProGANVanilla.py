@@ -13,24 +13,35 @@ to consider:
     full images are used entire time i.e. an entire scene is reduced to 4x4 image, might make more sense to
     use fragments of the image to get more meaningful representations
 """
+"""
+KEY NOTES:
+--Minibatch used in discrim
 
+--No batch normalization => pixelwise normalization after every 3x3 conv in gen, none in dis
+
+-- VGG-19 is used once the model reaches 32x32 therefore does not use 
+
+"""
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Flatten, Reshape, Conv2D, UpSampling2D, AveragePooling2D, LeakyReLU
+from tensorflow.keras.activations import softmax
+import tensorflow as tf
 from Layers import *
 
 
 class Prog_Discriminator(Model):
+    """
+    No normnalization according to paper.
+    """
     def __init__(self,
+                 clip_constraint,
                  leakyrelu_alpha=0.2,
-                 init_lr=0.001,
-                 init_beta_1=0,
-                 init_beta_2=0.99,
-                 init_epsilon=10e-8,
                  **kwargs
                  ):
         # call the parent constructor
         super(Prog_Discriminator, self).__init__(**kwargs)
+        self.clip_constraint = ClipConstraint(clip_constraint)
         self.leakyrelu_alpha = leakyrelu_alpha
 
         # intialize with 512
@@ -41,7 +52,7 @@ class Prog_Discriminator(Model):
 
         ### Construct base model ###
         # Input for first growth
-        self.input_conv = Conv2D(self.num_filters, (1, 1), padding='same', kernel_initializer='he_normal')
+        self.input_conv = Conv2D(self.num_filters, (1, 1), padding='same', kernel_initializer='he_normal', kernel_constraint=self.clip_constraint)
         self.input_act = LeakyReLU(alpha=0.2)
         self.input_dnsmpl = AveragePooling2D()
 
@@ -52,19 +63,20 @@ class Prog_Discriminator(Model):
         self.MinibatchStdev = MinibatchStdev()
 
         # conv 3x3
-        self.conv1 = Conv2D(512, (3, 3), padding='same', kernel_initializer='he_normal')
+        self.conv1 = Conv2D(512, (3, 3), padding='same', kernel_initializer='he_normal', kernel_constraint=self.clip_constraint)
         self.act1 = LeakyReLU(alpha=leakyrelu_alpha)
-
+        # self.pixel_w_norm1 = PixelNormalization()
 
         # conv 4x4 (1x1 dims)
-        self.conv2 = Conv2D(512, (4, 4), padding='same', strides=(512, 512), kernel_initializer='he_normal')
+        self.conv2 = Conv2D(512, (4, 4), padding='same', strides=(512, 512), kernel_initializer='he_normal', kernel_constraint=self.clip_constraint)
         self.act2 = LeakyReLU(alpha=leakyrelu_alpha)
-
-
+        # self.pixel_w_norm2 = PixelNormalization()
+        # self.droput = tf.keras.layers.Dropout(0.3)
         # dense output layer
         self.flatten = Flatten()
         self.dense = Dense(1)
 
+        #self.act3 = softmax
         # weighted output
         self.weighted_sum = WeightedSum()
 
@@ -81,7 +93,8 @@ class Prog_Discriminator(Model):
         # insert new dis block to front of list
         self.dis_blocks.insert(0,
             dis_block(num_filters,
-                      decrease_filters)
+                      decrease_filters,
+                      self.clip_constraint)
         )
 
         self.growth_phase += 1
@@ -148,7 +161,11 @@ class Prog_Discriminator(Model):
 
 
 class Prog_Generator(Model):
+    """
+    paper applies pixelwise normalization after every 3x3 conv in gen...
+    """
     def __init__(self,
+                 clip_constraint,
                  leakyrelu_alpha=0.2,
                  LR_input_size=(4, 4, 3),
                  kernel_initializer='he_normal',
@@ -156,7 +173,7 @@ class Prog_Generator(Model):
                  ):
         # call the parent constructor
         super(Prog_Generator, self).__init__(**kwargs)
-
+        # self.clip_constraint = ClipConstraint(clip_constraint)
         self.leakyrelu_alpha = leakyrelu_alpha
         self.LR_input_size = LR_input_size
         self.kernel_initializer = kernel_initializer
@@ -170,13 +187,19 @@ class Prog_Generator(Model):
         ### Construct base model ###
         # input = Input(shape=self.LR_input_size)
         # conv 4x4, input block
-        self.conv1 = Conv2D(512, (4, 4), padding='same', kernel_initializer=self.kernel_initializer)
+        self.conv1 = Conv2D(512, (4, 4), padding='same',
+                                kernel_initializer=self.kernel_initializer,
+                                #kernel_constraint=self.clip_constraint
+                                )
         self.act1 = LeakyReLU(alpha=self.leakyrelu_alpha)
 
         # conv 3x3, input block
-        self.conv2 = Conv2D(512, (3, 3), padding='same', kernel_initializer=self.kernel_initializer)
+        self.conv2 = Conv2D(512, (3, 3), padding='same',
+                            kernel_initializer=self.kernel_initializer,
+                            #kernel_constraint=self.clip_constraint
+                            )
         self.act2 = LeakyReLU(alpha=self.leakyrelu_alpha)
-
+        self.pixel_w_norm1 = PixelNormalization()
         # center to be filled with gen blocks
         self.gen_blocks = []
 
@@ -185,15 +208,26 @@ class Prog_Generator(Model):
         self.upspl_last = UpSampling2D()
         # conv 3x3
 
-        self.conv_last1 = Conv2D(16, (3, 3), padding='same', kernel_initializer=self.kernel_initializer)
+        self.conv_last1 = Conv2D(16, (3, 3), padding='same',
+                                 kernel_initializer=self.kernel_initializer,
+                                 #kernel_constraint=self.clip_constraint
+                                 )
         self.act_last1 = LeakyReLU(alpha=self.leakyrelu_alpha)
+        self.pixel_w_norm2 = PixelNormalization()
         # conv 3x3
-        self.conv_last2 = Conv2D(16, (3, 3), padding='same', kernel_initializer=self.kernel_initializer)
+        self.conv_last2 = Conv2D(16, (3, 3), padding='same',
+                                 kernel_initializer=self.kernel_initializer,
+                                 #kernel_constraint=self.clip_constraint
+                                 )
         self.act_last2 = LeakyReLU(alpha=self.leakyrelu_alpha)
+        self.pixel_w_norm3 = PixelNormalization()
         # weighted sum for merging of outputs
         self.weighted_sum = WeightedSum()
         # conv 1x1, output block
-        self.RGB_out =  Conv2D(3, (1, 1), padding='same', kernel_initializer=self.kernel_initializer)
+        self.RGB_out = Conv2D(3, (1, 1), padding='same',
+                              kernel_initializer=self.kernel_initializer,
+                              #kernel_constraint=self.clip_constraint
+                              )
 
         # intialize with growth period
         self.grow()
@@ -209,7 +243,9 @@ class Prog_Generator(Model):
         # add new gen block to model
         self.gen_blocks.append(
                                 gen_block(num_filters,
-                                          reduce_filters)
+                                          reduce_filters,
+                                          #self.clip_constraint
+                                          )
         )
         # remove upsamples as growth occurs
         # this will help compensate for input growth (img size increase)
@@ -232,7 +268,7 @@ class Prog_Generator(Model):
         x = self.act1(x)
         x = self.conv2(x)
         x = self.act2(x)
-
+        x = self.pixel_w_norm1(x)
         # pass through all layers except last layer
         for block in self.gen_blocks[:-1]:
             x = block(x)
@@ -245,8 +281,11 @@ class Prog_Generator(Model):
         # old pass
         x = self.upspl_last(x)
         x = self.conv_last1(x)
+        x = self.act_last1(x)
+        x = self.pixel_w_norm2(x)
         x = self.conv_last2(x)
         x = self.act_last2(x)
+        x = self.pixel_w_norm2(x)
         x = self.RGB_out(x)
 
         # fade in two outputs
@@ -256,11 +295,12 @@ class Prog_Generator(Model):
 
 class ProGAN(object):
     def __init__(self,
+                 clip_constraint,
                  **kwargs
                  ):
 
-        self.Discriminator = Prog_Discriminator(**kwargs)
-        self.Generator = Prog_Generator(**kwargs)
+        self.Discriminator = Prog_Discriminator(clip_constraint, **kwargs)
+        self.Generator = Prog_Generator(clip_constraint, **kwargs)
 
     def set_alpha(self, alpha):
         self.Discriminator.set_ws_alpha(alpha)

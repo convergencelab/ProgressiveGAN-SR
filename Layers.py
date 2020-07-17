@@ -134,7 +134,9 @@ class gen_block(tf.keras.layers.Layer):
 
     --upsample will double our output dims every block.
     """
-    def __init__(self, num_filters, reduce_filters, upsample=True, is_end=True, **kwargs):
+    def __init__(self, num_filters, reduce_filters,
+                 #clip_constraint,
+                 upsample=True, is_end=True, **kwargs):
         super(gen_block, self).__init__(**kwargs)
         # bool to remove upsamples where neccesary
         self.upsample = upsample
@@ -150,18 +152,29 @@ class gen_block(tf.keras.layers.Layer):
 
         self.upspl1 = UpSampling2D()
         self.conv1 = Conv2D(filters=self.num_filters,
-                  kernel_size=(3,3),padding="same")
+                        kernel_size=(3,3),padding="same",
+                            #kernel_constraint=clip_constraint
+                             )
         self.act1 = LeakyReLU(alpha=0.2)
+        self.pixel_w_norm1 = PixelNormalization()
         self.conv2 = Conv2D(filters=self.num_filters,
-                   kernel_size=(3, 3), padding="same")
+                   kernel_size=(3, 3), padding="same",
+                            #kernel_constraint=clip_constraint
+                            )
         self.act2 = LeakyReLU(alpha=0.2)
-
+        self.pixel_w_norm2 = PixelNormalization()
         # for if last
-        self.conv_last1 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal')
+        self.conv_last1 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal',
+                                 #kernel_constraint=clip_constraint
+                                 )
         self.act_last1 = LeakyReLU(alpha=0.2)
-        self.conv_last2 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal')
+        self.conv_last2 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal',
+                                 #kernel_constraint=clip_constraint
+                                 )
         self.act_last2 = LeakyReLU(alpha=0.2)
-        self.RGB_out = Conv2D(3, (1, 1), padding='same', kernel_initializer='he_normal')
+        self.RGB_out = Conv2D(3, (1, 1), padding='same', kernel_initializer='he_normal',
+                              #kernel_constraint=clip_constraint
+                              )
 
     def deactivate_output(self):
         """
@@ -180,8 +193,10 @@ class gen_block(tf.keras.layers.Layer):
             x = self.upspl1(x)
         x = self.conv1(x)
         x = self.act1(x)
+        x = self.pixel_w_norm1(x)
         x = self.conv2(x)
         x = self.act2(x)
+        x = self.pixel_w_norm2(x)
 
         if self.is_end:
             x = self.conv_last1(x)
@@ -200,33 +215,34 @@ class dis_block(tf.keras.layers.Layer):
 
     --downsample will halve our output dims every block.
     """
-    def __init__(self, num_filters, decrease_filters, is_top=True, **kwargs):
+    def __init__(self, num_filters, decrease_filters, clip_constraint, is_top=True, **kwargs):
         super(dis_block, self).__init__(**kwargs)
         # if is top, will include the input layer for it
         self.is_top = is_top
         self.num_filters = num_filters
-
         # filters increase after first conv layer
         if decrease_filters:
             self.num_filters = int(self.num_filters / 2)
 
         # input to be used when instance is the top of the model.
-        self.input_conv = Conv2D(self.num_filters, (1, 1), padding='same', kernel_initializer='he_normal')
+        self.input_conv = Conv2D(self.num_filters, (1, 1), padding='same', kernel_initializer='he_normal', kernel_constraint=clip_constraint)
         self.input_act = LeakyReLU(alpha=0.2)
         # until 32x32 must double filter size
 
 
         self.conv1 = Conv2D(filters=self.num_filters,
-                  kernel_size=(3,3),padding="same")
+                  kernel_size=(3,3),padding="same", kernel_constraint=clip_constraint)
         self.act1 = LeakyReLU(alpha=0.2)
+
 
         # must scale back up
         if decrease_filters:
             self.num_filters = int(self.num_filters * 2)
 
         self.conv2 = Conv2D(filters=self.num_filters,
-                   kernel_size=(3, 3), padding="same")
+                   kernel_size=(3, 3), padding="same", kernel_constraint=clip_constraint)
         self.act2 = LeakyReLU(alpha=0.2)
+
 
         # uses average pooling for downsample
         self.dnspl1 = AveragePooling2D()
@@ -246,8 +262,24 @@ class dis_block(tf.keras.layers.Layer):
 
         x = self.conv1(x)
         x = self.act1(x)
+
         x = self.conv2(x)
         x = self.act2(x)
+
         x = self.dnspl1(x)
 
         return x
+
+### CLIP CONSTRAINT FOR WASSERSTEIN LOSS ###
+class ClipConstraint(tf.keras.constraints.Constraint):
+    # set clip value when initialized
+    def __init__(self, clip_value):
+        self.clip_value = clip_value
+
+    # clip model weights to hypercube
+    def __call__(self, weights):
+        return tf.keras.backend.clip(weights, -self.clip_value, self.clip_value)
+
+    # get the config
+    def get_config(self):
+        return {'clip_value': self.clip_value}

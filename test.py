@@ -8,11 +8,11 @@ import numpy as np
 from ProGANVanilla import *
 from Perceptual_loss_VGG import PROG_PL_VGG19
 from util import *
-pg = ProGAN()
-input_shape = (16, 8, 8, 3)
+pg = ProGAN(0.001)
+input_shape = (16, 4, 4, 3)
 x = tf.random.normal(input_shape)
 y = pg.Generator(x, training=True)
-
+y = pg.Discriminator(y, training=True)
 """
 batch_size = 2
 
