@@ -8,6 +8,7 @@ import tensorflow_datasets as tfds
 import os
 from datetime import datetime
 import functools
+import subprocess
 
 """
 Training Progressive GAN, 
@@ -15,6 +16,7 @@ Training Progressive GAN,
 ### HYPERPARAMS ###
 batch_size = 16
 epochs = 256 # double for actually num iterations, as one epoch for fadein and one for straight pass
+gp_weight = 10.0 # gradient penalty weight
 
 # image #
 UP_SAMPLE = 2 # factor for upsample
@@ -23,10 +25,10 @@ TARGET_DIM = 256 # full image size
 
 # Adam #
 # generator tends to take 4x less to train therefore two different learning rates:
-gen_lr=0.0005
-dis_lr=0.001
-beta_1=0
-beta_2=0.99
+gen_lr=0.00001
+dis_lr=0.00004
+beta_1=0.5
+beta_2=0.9
 epsilon=10e-8
 clip_constraint = 0.001 # clip used for w loss
 
@@ -65,7 +67,8 @@ def preprocess(img_dict, lr_dim, upscale_factor=UP_SAMPLE):
     hr_dim = tuple([i * upscale_factor for i in lr_dim])
     img = img_dict['image']
     # resize and normalize
-    img_dict['image'] = tf.image.resize(img, hr_dim)/255.0, tf.image.resize(img, lr_dim)/255.0
+    img_dict['image'] = tf.image.resize(img, hr_dim), tf.image.resize(img, lr_dim)
+
 
     return img_dict
 
@@ -191,6 +194,9 @@ dis_test_summary_writer = tf.summary.create_file_writer(dis_test_log_dir)
 image_summary_writer = tf.summary.create_file_writer('../logs/gradient_tape/' + current_time + '/images')
 alpha_summary_writer = tf.summary.create_file_writer(alpha_log_dir)
 
+# start tensorboard
+os.system("start /B start cmd.exe @cmd /k tensorboard --logdir={}".format('../logs/gradient_tape/' + current_time))
+#subprocess.run(["tensorboard", "--logdir={}".format('../logs/gradient_tape/' + current_time)])
 ### Weights Dir ###
 if not os.path.isdir('../checkpoints'):
     os.mkdir('../checkpoints')
@@ -225,23 +231,23 @@ def gen_train_step(high_res_imgs, low_res_imgs, gan_output_res, step):
             # without use of content loss ...
             loss =discriminator_loss(high_res_imgs, predictions)
 
-        gradients = tape.gradient(loss, ProGAN.Generator.trainable_variables)
-        gen_optimizer.apply_gradients(zip(gradients, ProGAN.Generator.trainable_variables))
-        # update metrics after every batch
-        gen_train_loss(loss)
-        # tf.print("gen loss: ", loss)
-        gen_train_accuracy.update_state(high_res_imgs, predictions)
-        # write to gen_train-log #
-        with gen_train_summary_writer.as_default():
-            tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=step)
-            tf.summary.scalar('gen_train_accuracy', gen_train_accuracy.result(), step=step)
+    gradients = tape.gradient(loss, ProGAN.Generator.trainable_variables)
+    gen_optimizer.apply_gradients(zip(gradients, ProGAN.Generator.trainable_variables))
+    # update metrics after every batch
+    gen_train_loss(loss)
+    # tf.print("gen loss: ", loss)
+    gen_train_accuracy.update_state(high_res_imgs, predictions)
+    # write to gen_train-log #
+    with gen_train_summary_writer.as_default():
+        tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=step)
+        tf.summary.scalar('gen_train_accuracy', gen_train_accuracy.result(), step=step)
 
 
-        # view images #
-        with image_summary_writer.as_default():
-            tf.summary.image("Generated", predictions, max_outputs=1, step=GROW_COUNT)
-            tf.summary.image("high res", high_res_imgs, max_outputs=1, step=GROW_COUNT)
-            tf.summary.image("low res", low_res_imgs, max_outputs=1, step=GROW_COUNT)
+    # view images #
+    with image_summary_writer.as_default():
+        tf.summary.image("Generated", predictions, max_outputs=1, step=GROW_COUNT)
+        tf.summary.image("high res", high_res_imgs, max_outputs=1, step=GROW_COUNT)
+        tf.summary.image("low res", low_res_imgs, max_outputs=1, step=GROW_COUNT)
 
 ### discriminator train step ###
 # tf.function executes this function as a graph
@@ -389,7 +395,7 @@ def train_step(epoch, save_c, gan_output_res):
 def discriminator_loss(real_output, fake_output):
     #### real - fake
     ### larger discrim = smaller gen loss, etc...
-    return tf.reduce_mean(real_output) - tf.reduce_mean(fake_output)
+    return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
 
 # discrim loss + vgg loss
 def generator_loss(dis_output, high_res_imgs=False, predictions=False):
@@ -407,6 +413,29 @@ def generator_loss(dis_output, high_res_imgs=False, predictions=False):
         #return v_loss - dis_output
     return -tf.reduce_mean(dis_output)
 
+def gradient_penalty(batch_size, real_images, fake_images):
+    """ Calculates the gradient penalty.
+
+    This loss is calculated on an interpolated image
+    and added to the discriminator loss.
+    """
+    # get the interplated image
+    alpha = tf.random.normal([batch_size, 1, 1, 1], 0.0, 1.0)
+    diff = fake_images - real_images
+    interpolated = real_images + alpha * diff
+
+    with tf.GradientTape() as gp_tape:
+        gp_tape.watch(interpolated)
+        # 1. Get the discriminator output for this interpolated image.
+        pred = ProGAN.Discriminator(interpolated, training=True)
+
+    # 2. Calculate the gradients w.r.t to this interpolated image.
+    grads = gp_tape.gradient(pred, [interpolated])[0]
+    # 3. Calcuate the norm of the gradients
+    norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
+    gp = tf.reduce_mean((norm - 1.0) ** 2)
+    return gp
+
 
 @tf.function
 def full_train_step(high_res_imgs, low_res_imgs, step):
@@ -416,8 +445,9 @@ def full_train_step(high_res_imgs, low_res_imgs, step):
         real_output = ProGAN.Discriminator(high_res_imgs, training=True)
         fake_output = ProGAN.Discriminator(generated_imgs, training=True)
 
+        #gp = gradient_penalty(batch_size, high_res_imgs, generated_imgs)
         # dis loss...
-        dis_loss = discriminator_loss(real_output, fake_output)
+        dis_loss = discriminator_loss(real_output, fake_output) #+ gp * gp_weight
         tf.print("disloss:", dis_loss)
         # if tf.math.greater_equal(input_dim, 32):
          #   gen_loss = generator_loss(fake_output, high_res_imgs, generated_imgs)
