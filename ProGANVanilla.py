@@ -34,28 +34,6 @@ import tensorflow as tf
 import numpy as np
 from Layers import *
 
-def equalize_learning_rate(shape, gain, fan_in=None):
-    '''
-    This adjusts the weights of every layer by the constant from
-    He's initializer so that we adjust for the variance in the dynamic
-    range in different features
-    shape   :  shape of tensor (layer): these are the dimensions
-        of each layer.
-    For example, [4,4,48,3]. In this case, [kernel_size, kernel_size,
-        number_of_filters, feature_maps]. But this will depend
-        slightly on your implementation.
-    gain    :  typically sqrt(2)
-    fan_in  :  adjustment for the number of incoming connections
-        as per Xavier's / He's initialization
-    '''
-    if fan_in is None: fan_in = np.prod(shape[:-1])
-    std = gain / K.sqrt(fan_in)
-    wscale = K.constant(std, name='wscale', dtype=np.float32)
-    adjusted_weights = K.get_value('layer', shape=shape,
-        initializer=tf.initializers.random_normal()) * wscale
-    return adjusted_weights
-
-
 
 class Prog_Discriminator(Model):
     """
@@ -82,10 +60,11 @@ class Prog_Discriminator(Model):
 
         ### Construct base model ###
         # Input for first growth
-        self.input_conv = Conv2D(self.num_filters, (1, 1),
-                                 padding='same',
-                                 kernel_initializer='he_normal',
-                                 #kernel_constraint=self.clip_constraint
+        self.input_conv = Conv2DEQ(filters=self.num_filters,
+                                    kernel_size=(1, 1),
+                                    padding='same',
+                                    kernel_initializer='he_normal',
+                                    #kernel_constraint=self.clip_constraint
                                  )
         self.input_act = LeakyReLU(alpha=0.2)
         self.input_dnsmpl = AveragePooling2D()
@@ -97,7 +76,10 @@ class Prog_Discriminator(Model):
         self.MinibatchStdev = MinibatchStdev()
 
         # conv 3x3
-        self.conv1 = Conv2D(512, (3, 3), padding='same',
+
+        self.conv1 = Conv2D(filters=512,
+                            kernel_size=(3, 3),
+                            padding='same',
                             kernel_initializer='he_normal',
                             #kernel_constraint=self.clip_constraint
                             )
@@ -105,10 +87,12 @@ class Prog_Discriminator(Model):
         # self.pixel_w_norm1 = PixelNormalization()
 
         # conv 4x4 (1x1 dims)
-        self.conv2 = Conv2D(512, (4, 4), padding='same',
-                            strides=(512, 512),
-                            kernel_initializer='he_normal',
-                            # kernel_constraint=self.clip_constraint
+        self.conv2 = Conv2DEQ(  filters=512,
+                                kernel_size=(4, 4),
+                                padding='same',
+                                strides=(512, 512),
+                                kernel_initializer='he_normal',
+                                # kernel_constraint=self.clip_constraint
                             )
         self.act2 = LeakyReLU(alpha=leakyrelu_alpha)
         # self.pixel_w_norm2 = PixelNormalization()
@@ -229,16 +213,20 @@ class Prog_Generator(Model):
         ### Construct base model ###
         # input = Input(shape=self.LR_input_size)
         # conv 4x4, input block
-        self.conv1 = Conv2D(512, (4, 4), padding='same',
+        self.conv1 = Conv2DEQ(  filters=512,
+                                kernel_size=(4, 4),
+                                padding='same',
                                 kernel_initializer=self.kernel_initializer,
                                 #kernel_constraint=self.clip_constraint
                                 )
         self.act1 = LeakyReLU(alpha=self.leakyrelu_alpha)
 
         # conv 3x3, input block
-        self.conv2 = Conv2D(512, (3, 3), padding='same',
-                            kernel_initializer=self.kernel_initializer,
-                            #kernel_constraint=self.clip_constraint
+        self.conv2 = Conv2DEQ(  filters=512,
+                                kernel_size=(3, 3),
+                                padding='same',
+                                kernel_initializer=self.kernel_initializer,
+                                #kernel_constraint=self.clip_constraint
                             )
         self.act2 = LeakyReLU(alpha=self.leakyrelu_alpha)
         self.pixel_w_norm1 = PixelNormalization()
@@ -250,25 +238,32 @@ class Prog_Generator(Model):
         self.upspl_last = UpSampling2D()
         # conv 3x3
 
-        self.conv_last1 = Conv2D(16, (3, 3), padding='same',
-                                 kernel_initializer=self.kernel_initializer,
-                                 #kernel_constraint=self.clip_constraint
+        self.conv_last1 = Conv2DEQ(filters=16,
+                                   kernel_size=(3, 3),
+                                   padding='same',
+                                   kernel_initializer=self.kernel_initializer,
+                                   #kernel_constraint=self.clip_constraint
                                  )
         self.act_last1 = LeakyReLU(alpha=self.leakyrelu_alpha)
         self.pixel_w_norm2 = PixelNormalization()
         # conv 3x3
-        self.conv_last2 = Conv2D(16, (3, 3), padding='same',
-                                 kernel_initializer=self.kernel_initializer,
-                                 #kernel_constraint=self.clip_constraint
+        self.conv_last2 = Conv2DEQ(
+                                   filters=16,
+                                   kernel_size=(3, 3),
+                                   padding='same',
+                                   kernel_initializer=self.kernel_initializer,
+                                   #kernel_constraint=self.clip_constraint
                                  )
         self.act_last2 = LeakyReLU(alpha=self.leakyrelu_alpha)
         self.pixel_w_norm3 = PixelNormalization()
         # weighted sum for merging of outputs
         self.weighted_sum = WeightedSum()
         # conv 1x1, output block
-        self.RGB_out = Conv2D(3, (1, 1), padding='same',
-                              kernel_initializer=self.kernel_initializer,
-                              #kernel_constraint=self.clip_constraint
+        self.RGB_out = Conv2DEQ(filters=3,
+                                kernel_size=(1, 1),
+                                padding='same',
+                                kernel_initializer=self.kernel_initializer,
+                                #kernel_constraint=self.clip_constraint
                               )
 
         # intialize with growth period

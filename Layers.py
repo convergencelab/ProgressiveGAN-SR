@@ -143,29 +143,40 @@ class gen_block(tf.keras.layers.Layer):
             self.num_filters = num_filters
 
         self.upspl1 = UpSampling2D()
-        self.conv1 = Conv2D(filters=self.num_filters,
-                        kernel_size=(3,3),padding="same",
+        self.conv1 = Conv2DEQ(filters=self.num_filters,
+                              kernel_size=(3,3),
+                              padding="same",
                             #kernel_constraint=clip_constraint
                              )
         self.act1 = LeakyReLU(alpha=0.2)
         self.pixel_w_norm1 = PixelNormalization()
-        self.conv2 = Conv2D(filters=self.num_filters,
-                   kernel_size=(3, 3), padding="same",
+        self.conv2 = Conv2DEQ(filters=self.num_filters,
+                              kernel_size=(3, 3),
+                              padding="same",
                             #kernel_constraint=clip_constraint
                             )
         self.act2 = LeakyReLU(alpha=0.2)
         self.pixel_w_norm2 = PixelNormalization()
         # for if last
-        self.conv_last1 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal',
-                                 #kernel_constraint=clip_constraint
+        self.conv_last1 = Conv2DEQ(filters=16,
+                                   kernel_size=(3, 3),
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   #kernel_constraint=clip_constraint
                                  )
         self.act_last1 = LeakyReLU(alpha=0.2)
-        self.conv_last2 = Conv2D(16, (3, 3), padding='same', kernel_initializer='he_normal',
-                                 #kernel_constraint=clip_constraint
+        self.conv_last2 = Conv2DEQ(filters=16,
+                                   kernel_size=(3, 3),
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   #kernel_constraint=clip_constraint
                                  )
         self.act_last2 = LeakyReLU(alpha=0.2)
-        self.RGB_out = Conv2D(3, (1, 1), padding='same', kernel_initializer='he_normal',
-                              #kernel_constraint=clip_constraint
+        self.RGB_out = Conv2DEQ(filters=3,
+                                kernel_size=(1, 1),
+                                padding='same',
+                                kernel_initializer='he_normal',
+                                #kernel_constraint=clip_constraint
                               )
 
     def deactivate_output(self):
@@ -221,16 +232,17 @@ class dis_block(tf.keras.layers.Layer):
             self.num_filters = int(self.num_filters / 2)
 
         # input to be used when instance is the top of the model.
-        self.input_conv = Conv2D(self.num_filters, (1, 1),
-                                 padding='same',
-                                 kernel_initializer='he_normal',
-                                 #kernel_constraint=clip_constraint
+        self.input_conv = Conv2DEQ(filters=self.num_filters,
+                                   kernel_size=(1, 1),
+                                   padding='same',
+                                   kernel_initializer='he_normal',
+                                   #kernel_constraint=clip_constraint
                                  )
         self.input_act = LeakyReLU(alpha=0.2)
         # until 32x32 must double filter size
 
 
-        self.conv1 = Conv2D(filters=self.num_filters,
+        self.conv1 = Conv2DEQ(filters=self.num_filters,
                             kernel_size=(3,3),
                             padding="same",
                             #kernel_constraint=clip_constraint
@@ -242,7 +254,7 @@ class dis_block(tf.keras.layers.Layer):
         if decrease_filters:
             self.num_filters = int(self.num_filters * 2)
 
-        self.conv2 = Conv2D(filters=self.num_filters,
+        self.conv2 = Conv2DEQ(filters=self.num_filters,
                             kernel_size=(3, 3),
                             padding="same",
                             #kernel_constraint=clip_constraint
@@ -298,3 +310,43 @@ class RandomWeightedAverage(tf.keras.layers.Layer):
     def _merge_function(self, inputs):
         alpha = K.random_uniform((self.batch_size, 1, 1, 1))
         return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
+
+# equalized learning rate layer #
+class Conv2DEQ(Conv2D):
+    """
+    Standard Conv2D layer but includes learning rate equilization
+    at runtime as per Karras et al. 2017.
+
+    Inherits Conv2D layer and overrides the call method, following
+    https://github.com/keras-team/keras/blob/master/keras/layers/convolutional.py
+
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def build(self, input_shape):
+        super().build(input_shape)
+        # The number of inputs
+        n = np.product([int(val) for val in input_shape[1:]])
+        # He initialisation constant
+        self.c = np.sqrt(2/n)
+
+    def call(self, inputs):
+        if self.rank == 2:
+            outputs = K.conv2d(
+                inputs,
+                self.kernel*self.c, # scale kernel
+                strides=self.strides,
+                padding=self.padding,
+                data_format=self.data_format,
+                dilation_rate=self.dilation_rate)
+
+        if self.use_bias:
+            outputs = K.bias_add(
+                outputs,
+                self.bias,
+                data_format=self.data_format)
+
+        if self.activation is not None:
+            return self.activation(outputs)
+        return outputs
