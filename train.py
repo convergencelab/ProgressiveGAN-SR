@@ -5,35 +5,40 @@ from Layers import *
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import tensorflow.keras.backend as K
 import os
 from datetime import datetime
 import functools
 
 """
 Training Progressive GAN, 
+
+Should be training critic several times more than generator,
+typical ratio is 5 critic updates:1 generator update
 """
 ### HYPERPARAMS ###
 batch_size = 16
 epochs = 256 # double for actually num iterations, as one epoch for fadein and one for straight pass
 gp_weight = 10.0 # gradient penalty weight
-
+dis_per_gen_ratio = 5# number of critic trains per gen train
+LAMBDA = 10# lambda for gradient penalty
 # image #
 UP_SAMPLE = 2 # factor for upsample
-START_INPUT_DIM = 16 # start with 4x4 input -> initialize with growth phase to 8x8 (so really 4)
+START_INPUT_DIM = 4 # start with 4x4 input -> initialize with growth phase to 8x8 (so really 4)
 TARGET_DIM = 256 # full image size
 
 # Adam #
 # generator tends to take 4x less to train therefore two different learning rates:
-gen_lr=0.0001
-dis_lr=0.0004
+gen_lr=0.001
+dis_lr=0.001
 beta_1=0.5
 beta_2=0.9
 epsilon=10e-8
-clip_constraint = 0.001 # clip used for w loss
+# clip_constraint = 0.01 # clip used for w loss
 
 ### MODELS ###
-ProGAN = ProGAN(clip_constraint)
-
+# ProGAN = ProGAN(clip_constraint)
+ProGAN = ProGAN()
 # use 1st conv block for content loss
 # input shape is the size of intial output of gan
 # we intialize GAN as 2x2 input -> 4x4 output
@@ -147,7 +152,7 @@ dis_optimizer = tf.keras.optimizers.Adam(lr=dis_lr,
                                      epsilon=epsilon)
 
 # This method returns a helper function to compute cross entropy loss
-cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+#cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 
 ### intialize train metrics ###
 gen_train_loss = tf.keras.metrics.Mean(name='gen_train_loss')
@@ -190,7 +195,22 @@ if not os.path.isdir('../checkpoints'):
 def discriminator_loss(real_output, fake_output):
     #### fake - real
     ### larger discrim = smaller gen loss, etc...
-    return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
+    # must also incorporate gradient penalty
+    # measures the squared difference between the norm of
+    # the gradient of the predictions with the respect to
+    # input images and 1
+    # intractable to evaluate every point, uses a handful of points
+    # incorporate this into a layer
+
+    interpolated_img = RandomWeightedAverage(batch_size)([real_output, fake_output])
+    # interpolated image pass
+    gradients = tf.gradients(ProGAN.Discriminator(interpolated_img), [interpolated_img])[0]
+    slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+    gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
+
+
+    return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output) + LAMBDA * gradient_penalty
+
 
 # discrim loss + vgg loss
 def vgg_generator_loss(dis_output, high_res_imgs, predictions):
@@ -208,10 +228,11 @@ def vgg_generator_loss(dis_output, high_res_imgs, predictions):
 def generator_loss(dis_output):
     return -tf.reduce_mean(dis_output)
 
+
 @tf.function
-def full_train_step(high_res_imgs, low_res_imgs, step):
-    with tf.GradientTape() as gen_tape, tf.GradientTape() as dis_tape:
-        generated_imgs = ProGAN.Generator(low_res_imgs, training=True)
+def dis_train_step(high_res_imgs, low_res_imgs, step):
+    with tf.GradientTape() as dis_tape:
+        generated_imgs = ProGAN.Generator(low_res_imgs, training=False)
 
         real_output = ProGAN.Discriminator(high_res_imgs, training=True)
         fake_output = ProGAN.Discriminator(generated_imgs, training=True)
@@ -219,31 +240,42 @@ def full_train_step(high_res_imgs, low_res_imgs, step):
         #gp = gradient_penalty(batch_size, high_res_imgs, generated_imgs)
         # dis loss...
         dis_loss = discriminator_loss(real_output, fake_output) #two passes : negative fake and regular real.
-        #tf.print("disloss:", dis_loss)
+
+        # apply loss
+        dis_train_loss(dis_loss)
+
+        # apply accuracy
+        gradients_of_discriminator = dis_tape.gradient(dis_loss, ProGAN.Discriminator.trainable_variables)
+        dis_optimizer.apply_gradients(zip(gradients_of_discriminator, ProGAN.Discriminator.trainable_variables))
+
+    # write to dis_train-log #
+    with dis_train_summary_writer.as_default():
+        tf.summary.scalar('dis_train_loss', dis_train_loss.result(), step=step)
+        tf.summary.scalar('dis_train_accuracy', dis_train_accuracy.result(), step=step)
+
+@tf.function
+def gen_train_step(high_res_imgs, low_res_imgs, step):
+    with tf.GradientTape() as gen_tape:
+        # pass thru gen
+        generated_imgs = ProGAN.Generator(low_res_imgs, training=True)
+        fake_output = ProGAN.Discriminator(generated_imgs, training=False)
+
+        # if >= 32 use vgg loss!
         true_fn = lambda: vgg_generator_loss(fake_output, high_res_imgs, generated_imgs)
         false_fn = lambda: generator_loss(fake_output)
         gen_loss = tf.cond(input_dim >= 32, true_fn, false_fn)
 
         # apply loss
         gen_train_loss(gen_loss)
-        dis_train_loss(dis_loss)
 
         # apply accuracy
         gradients_of_generator = gen_tape.gradient(gen_loss, ProGAN.Generator.trainable_variables)
-        gradients_of_discriminator = dis_tape.gradient(dis_loss, ProGAN.Discriminator.trainable_variables)
-
         gen_optimizer.apply_gradients(zip(gradients_of_generator, ProGAN.Generator.trainable_variables))
-        dis_optimizer.apply_gradients(zip(gradients_of_discriminator, ProGAN.Discriminator.trainable_variables))
 
     # write to gen_train-log #
     with gen_train_summary_writer.as_default():
         tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=step)
         tf.summary.scalar('gen_train_accuracy', gen_train_accuracy.result(), step=step)
-
-    # write to dis_train-log #
-    with dis_train_summary_writer.as_default():
-        tf.summary.scalar('dis_train_loss', dis_train_loss.result(), step=step)
-        tf.summary.scalar('dis_train_accuracy', dis_train_accuracy.result(), step=step)
 
     # view images #
     with image_summary_writer.as_default():
@@ -251,30 +283,6 @@ def full_train_step(high_res_imgs, low_res_imgs, step):
         tf.summary.image("high res", high_res_imgs, max_outputs=1, step=GROW_COUNT)
         tf.summary.image("low res", low_res_imgs, max_outputs=1, step=GROW_COUNT)
 
-def dis_test_step(high_res_imgs, low_res_imgs, step):
-    # feed test sample in
-    # use super res on even, true image on odd steps #
-    label = step % 2
-    if label:
-        x = ProGAN.Generator(low_res_imgs, training=False)
-        y = tf.constant(np.array([[1.0, 0.0] for i in range(batch_size)]), dtype=tf.float32)
-    else:
-        x = high_res_imgs
-        y = tf.constant(np.array([[0.0, 1.0] for i in range(batch_size)]), dtype=tf.float32)
-    # predict on gen output
-    predictions = ProGAN.Discriminator(x, training=False)
-    t_loss = discrim_loss(y, predictions)
-
-    # update metrics
-    dis_test_loss(t_loss)
-    dis_test_accuracy.update_state(label, predictions)
-
-    # write to gen_test-log #
-    with dis_test_summary_writer.as_default():
-        tf.summary.scalar('dis_test_loss', dis_test_loss.result(), step=step)
-        tf.summary.scalar('dis_test_accuracy', dis_test_accuracy.result(), step=step)
-
-# def full_test_step(high_res_imgs, low_res_imgs, step):
 
 def train_epoch(epoch, save_c):
     # Reset the metrics at the start of the next epoch
@@ -287,12 +295,21 @@ def train_epoch(epoch, save_c):
     dis_train_accuracy.reset_states()
     dis_test_loss.reset_states()
     dis_test_accuracy.reset_states()
+
+    ## train gen ##
     for i, batch in enumerate(train_ds):
         step = tf.convert_to_tensor(i, dtype=tf.int64)
         # data structured: dataset -> batch -> sample
         hr, lr = batch['image']
+        gen_train_step(hr, lr, step)
 
-        full_train_step(hr, lr, step)
+    ## train discrim ##
+    for i in range(dis_per_gen_ratio):
+        for i, batch in enumerate(train_ds):
+            step = tf.convert_to_tensor(i, dtype=tf.int64)
+            # data structured: dataset -> batch -> sample
+            hr, lr = batch['image']
+            dis_train_step(hr, lr, step)
 
     # test #
     for i, batch in enumerate(test_ds):

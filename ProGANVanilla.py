@@ -21,27 +21,57 @@ KEY NOTES:
 
 -- VGG-19 is used once the model reaches 32x32 therefore does not use 
 
+--Equalized Learning rate: weights need to be normalized such that 
+    w' = w/c, where c is different for each layer. 
+    
+Scale weights per layer at run time
 """
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, Flatten, Reshape, Conv2D, UpSampling2D, AveragePooling2D, LeakyReLU
+from tensorflow.keras.layers import Dense, Flatten, Conv2D, UpSampling2D, AveragePooling2D, LeakyReLU
 from tensorflow.keras.activations import softmax
 import tensorflow as tf
+import numpy as np
 from Layers import *
+
+def equalize_learning_rate(shape, gain, fan_in=None):
+    '''
+    This adjusts the weights of every layer by the constant from
+    He's initializer so that we adjust for the variance in the dynamic
+    range in different features
+    shape   :  shape of tensor (layer): these are the dimensions
+        of each layer.
+    For example, [4,4,48,3]. In this case, [kernel_size, kernel_size,
+        number_of_filters, feature_maps]. But this will depend
+        slightly on your implementation.
+    gain    :  typically sqrt(2)
+    fan_in  :  adjustment for the number of incoming connections
+        as per Xavier's / He's initialization
+    '''
+    if fan_in is None: fan_in = np.prod(shape[:-1])
+    std = gain / K.sqrt(fan_in)
+    wscale = K.constant(std, name='wscale', dtype=np.float32)
+    adjusted_weights = K.get_value('layer', shape=shape,
+        initializer=tf.initializers.random_normal()) * wscale
+    return adjusted_weights
+
 
 
 class Prog_Discriminator(Model):
     """
     No normnalization according to paper.
+
+    Critic -> WGAN-GP loss
+    No clipping -> gradient penalty instead
     """
     def __init__(self,
-                 clip_constraint,
+                 #clip_constraint,
                  leakyrelu_alpha=0.2,
                  **kwargs
                  ):
         # call the parent constructor
         super(Prog_Discriminator, self).__init__(**kwargs)
-        self.clip_constraint = ClipConstraint(clip_constraint)
+        #self.clip_constraint = ClipConstraint(clip_constraint)
         self.leakyrelu_alpha = leakyrelu_alpha
 
         # intialize with 512
@@ -52,7 +82,11 @@ class Prog_Discriminator(Model):
 
         ### Construct base model ###
         # Input for first growth
-        self.input_conv = Conv2D(self.num_filters, (1, 1), padding='same', kernel_initializer='he_normal', kernel_constraint=self.clip_constraint)
+        self.input_conv = Conv2D(self.num_filters, (1, 1),
+                                 padding='same',
+                                 kernel_initializer='he_normal',
+                                 #kernel_constraint=self.clip_constraint
+                                 )
         self.input_act = LeakyReLU(alpha=0.2)
         self.input_dnsmpl = AveragePooling2D()
 
@@ -63,12 +97,19 @@ class Prog_Discriminator(Model):
         self.MinibatchStdev = MinibatchStdev()
 
         # conv 3x3
-        self.conv1 = Conv2D(512, (3, 3), padding='same', kernel_initializer='he_normal', kernel_constraint=self.clip_constraint)
+        self.conv1 = Conv2D(512, (3, 3), padding='same',
+                            kernel_initializer='he_normal',
+                            #kernel_constraint=self.clip_constraint
+                            )
         self.act1 = LeakyReLU(alpha=leakyrelu_alpha)
         # self.pixel_w_norm1 = PixelNormalization()
 
         # conv 4x4 (1x1 dims)
-        self.conv2 = Conv2D(512, (4, 4), padding='same', strides=(512, 512), kernel_initializer='he_normal', kernel_constraint=self.clip_constraint)
+        self.conv2 = Conv2D(512, (4, 4), padding='same',
+                            strides=(512, 512),
+                            kernel_initializer='he_normal',
+                            # kernel_constraint=self.clip_constraint
+                            )
         self.act2 = LeakyReLU(alpha=leakyrelu_alpha)
         # self.pixel_w_norm2 = PixelNormalization()
         # self.droput = tf.keras.layers.Dropout(0.3)
@@ -94,7 +135,8 @@ class Prog_Discriminator(Model):
         self.dis_blocks.insert(0,
             dis_block(num_filters,
                       decrease_filters,
-                      self.clip_constraint)
+                      #self.clip_constraint
+                      )
         )
 
         self.growth_phase += 1
@@ -165,7 +207,7 @@ class Prog_Generator(Model):
     paper applies pixelwise normalization after every 3x3 conv in gen...
     """
     def __init__(self,
-                 clip_constraint,
+                 #clip_constraint,
                  leakyrelu_alpha=0.2,
                  LR_input_size=(4, 4, 3),
                  kernel_initializer='he_normal',
@@ -295,12 +337,16 @@ class Prog_Generator(Model):
 
 class ProGAN(object):
     def __init__(self,
-                 clip_constraint,
+                 #clip_constraint,
                  **kwargs
                  ):
 
-        self.Discriminator = Prog_Discriminator(clip_constraint, **kwargs)
-        self.Generator = Prog_Generator(clip_constraint, **kwargs)
+        self.Discriminator = Prog_Discriminator(
+                                                #clip_constraint,
+                                                **kwargs)
+        self.Generator = Prog_Generator(
+                                       #clip_constraint,
+                                        **kwargs)
 
     def set_alpha(self, alpha):
         self.Discriminator.set_ws_alpha(alpha)
