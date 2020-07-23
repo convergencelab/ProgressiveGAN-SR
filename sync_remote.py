@@ -37,7 +37,7 @@ scp = scp.SCPClient(ssh.get_transport())
 sync()
 # get latest log
 num_logs = len(glob.glob("../remote_logs/logs/gradient_tape/*"))
-logdir = max([os.path.basename(f) for f in glob.glob("../remote_logs/logs/gradient_tape/*")])
+logdir = "../remote_logs/logs/gradient_tape/" + max([os.path.basename(f) for f in glob.glob("../remote_logs/logs/gradient_tape/*")])
 # start tensorboard
 print("serving tensorboard for {}".format(logdir))
 os.system("start /B start cmd.exe @cmd /c tensorboard --logdir={}".format(logdir))

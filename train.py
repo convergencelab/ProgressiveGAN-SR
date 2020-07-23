@@ -103,8 +103,8 @@ def prepare_and_upscale(lr_dim):
     train_ds = data.skip(test_ds_size)
 
     # minibatch
-    test_ds = test_ds.batch(batch_size).repeat(epochs)
-    train_ds = train_ds.batch(batch_size).repeat(epochs)
+    test_ds = test_ds.batch(batch_size)
+    train_ds = train_ds.batch(batch_size)
 
     # preprocess mapping function, takes image and turns into
     # tuple with lr and hr img
@@ -127,7 +127,6 @@ Above we will see that the preprocessed datasets will have follwing features:
             -> each dict['images'] contains a tuple with the lr and hr images 
             with specified batch size (dtype = np array)
 """
-
 
 # update the alpha value on each instance of WeightedSum
 def update_fadein(step, train_ds_size):
@@ -176,6 +175,8 @@ gen_test_log_dir = '../logs/gradient_tape/' + current_time + '/gen_test'
 dis_train_log_dir = '../logs/gradient_tape/' + current_time + '/dis_train'
 dis_test_log_dir = '../logs/gradient_tape/' + current_time + '/dis_test'
 alpha_log_dir = '../logs/gradient_tape/' + current_time + '/alpha'
+dis_graph_writer = tf.summary.create_file_writer('../logs/gradient_tape/' + current_time + '/dis_graph')
+gen_graph_writer = tf.summary.create_file_writer('../logs/gradient_tape/' + current_time + '/gen_graph')
 
 gen_train_summary_writer = tf.summary.create_file_writer(gen_train_log_dir)
 gen_test_summary_writer = tf.summary.create_file_writer(gen_test_log_dir)
@@ -246,6 +247,8 @@ def dis_train_step(high_res_imgs, low_res_imgs, step):
         dis_train_loss(dis_loss)
 
         # apply accuracy
+        dis_train_accuracy.update_state(real_output, fake_output)
+
         gradients_of_discriminator = dis_tape.gradient(dis_loss, ProGAN.Discriminator.trainable_variables)
         dis_optimizer.apply_gradients(zip(gradients_of_discriminator, ProGAN.Discriminator.trainable_variables))
 
@@ -254,10 +257,9 @@ def dis_train_step(high_res_imgs, low_res_imgs, step):
         tf.summary.scalar('dis_train_loss', dis_train_loss.result(), step=step)
         tf.summary.scalar('dis_train_accuracy', dis_train_accuracy.result(), step=step)
 
+
 @tf.function
 def gen_train_step(high_res_imgs, low_res_imgs, step):
-    if epoch ==0 and step ==0:
-        ann_viz(ProGAN.Generator, title="My first neural network")
     with tf.GradientTape() as gen_tape:
         # pass thru gen
         generated_imgs = ProGAN.Generator(low_res_imgs, training=True)
@@ -273,9 +275,12 @@ def gen_train_step(high_res_imgs, low_res_imgs, step):
         gen_train_loss(gen_loss)
 
         # apply accuracy
+        gen_train_accuracy.update_state(high_res_imgs, generated_imgs)
+
         gradients_of_generator = gen_tape.gradient(gen_loss, ProGAN.Generator.trainable_variables)
         gen_optimizer.apply_gradients(zip(gradients_of_generator, ProGAN.Generator.trainable_variables))
-
+        # if epoch == 0 and step == 0:
+           #  ann_viz(ProGAN.Generator, title="My first neural network")
     # write to gen_train-log #
     with gen_train_summary_writer.as_default():
         tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=step)
@@ -308,7 +313,15 @@ def train_epoch(epoch, save_c):
 
         fk = ProGAN.Generator(lr).numpy()[0]
         tf.print("avg pixel: {}".format(np.average(fk, axis=0)))
+
+        tf.summary.trace_on(graph=True, profiler=True)
         gen_train_step(hr, lr, step)
+        # write graph
+        with gen_graph_writer.as_default():
+            tf.summary.trace_export(
+                name="gen_graph_trace",
+                step=0,
+                profiler_outdir='../logs/gradient_tape/' + current_time + '/gen_graph')
 
     ## train discrim ##
     for i in range(dis_per_gen_ratio):
@@ -316,13 +329,21 @@ def train_epoch(epoch, save_c):
             step = tf.convert_to_tensor(i, dtype=tf.int64)
             # data structured: dataset -> batch -> sample
             hr, lr = batch['image']
+
+            tf.summary.trace_on(graph=True, profiler=True)
             dis_train_step(hr, lr, step)
+            # write graph
+            with dis_graph_writer.as_default():
+                tf.summary.trace_export(
+                    name="dis_graph_trace",
+                    step=0,
+                    profiler_outdir='../logs/gradient_tape/' + current_time + '/dis_graph')
 
     # test #
-    for i, batch in enumerate(test_ds):
-        step = tf.convert_to_tensor(i, dtype=tf.int64)
-        # get lr, hr batch tuple
-        hr, lr = batch['image']
+    #for i, batch in enumerate(test_ds):
+    #    step = tf.convert_to_tensor(i, dtype=tf.int64)
+    #    # get lr, hr batch tuple
+     #   hr, lr = batch['image']
 
     ### save weights ###
     if not epoch % NUM_CHECKPOINTS_DIV:
@@ -341,7 +362,6 @@ Two phases:
     1. Fade in the 3-layer block
     2. stabilize the network
 """
-
 # intialize images at 8x8, 16x16
 train_ds, test_ds, train_ds_size = prepare_and_upscale(lr_dim=(input_dim, input_dim))
 GROW_COUNT = 0

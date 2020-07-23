@@ -64,6 +64,7 @@ class Prog_Discriminator(Model):
                                     kernel_size=(1, 1),
                                     padding='same',
                                     kernel_initializer='he_normal',
+                                    name="input"
                                     #kernel_constraint=self.clip_constraint
                                  )
         self.input_act = LeakyReLU(alpha=0.2)
@@ -81,9 +82,10 @@ class Prog_Discriminator(Model):
                             kernel_size=(3, 3),
                             padding='same',
                             kernel_initializer='he_normal',
+                            name="conv1"
                             #kernel_constraint=self.clip_constraint
                             )
-        self.act1 = LeakyReLU(alpha=leakyrelu_alpha)
+        self.act1 = LeakyReLU(alpha=leakyrelu_alpha, name="act1")
         # self.pixel_w_norm1 = PixelNormalization()
 
         # conv 4x4 (1x1 dims)
@@ -92,18 +94,19 @@ class Prog_Discriminator(Model):
                                 padding='same',
                                 strides=(512, 512),
                                 kernel_initializer='he_normal',
+                                name="conv2"
                                 # kernel_constraint=self.clip_constraint
                             )
-        self.act2 = LeakyReLU(alpha=leakyrelu_alpha)
+        self.act2 = LeakyReLU(alpha=leakyrelu_alpha, name="act2")
         # self.pixel_w_norm2 = PixelNormalization()
         # self.droput = tf.keras.layers.Dropout(0.3)
         # dense output layer
-        self.flatten = Flatten()
-        self.dense = Dense(1)
+        self.flatten = Flatten(name="flatten")
+        self.dense = Dense(1, name="dense")
 
         #self.act3 = softmax
         # weighted output
-        self.weighted_sum = WeightedSum()
+        self.weighted_sum = WeightedSum(name="weighted_sum")
 
         # intialize with growth period
         self.grow()
