@@ -6,6 +6,8 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow.keras.backend as K
+from ann_visualizer.visualize import ann_viz
+
 import os
 from datetime import datetime
 import functools
@@ -19,18 +21,17 @@ typical ratio is 5 critic updates:1 generator update
 ### HYPERPARAMS ###
 batch_size = 16
 epochs = 256 # double for actually num iterations, as one epoch for fadein and one for straight pass
-gp_weight = 10.0 # gradient penalty weight
 dis_per_gen_ratio = 5# number of critic trains per gen train
 LAMBDA = 10# lambda for gradient penalty
 # image #
 UP_SAMPLE = 2 # factor for upsample
-START_INPUT_DIM = 4 # start with 4x4 input -> initialize with growth phase to 8x8 (so really 4)
+START_INPUT_DIM = 16 # start with 4x4 input -> initialize with growth phase to 8x8 (so really 4)
 TARGET_DIM = 256 # full image size
 
 # Adam #
 # generator tends to take 4x less to train therefore two different learning rates:
-gen_lr=0.001
-dis_lr=0.001
+gen_lr=0.01
+dis_lr=0.01
 beta_1=0.5
 beta_2=0.9
 epsilon=10e-8
@@ -255,10 +256,13 @@ def dis_train_step(high_res_imgs, low_res_imgs, step):
 
 @tf.function
 def gen_train_step(high_res_imgs, low_res_imgs, step):
+    if epoch ==0 and step ==0:
+        ann_viz(ProGAN.Generator, title="My first neural network")
     with tf.GradientTape() as gen_tape:
         # pass thru gen
         generated_imgs = ProGAN.Generator(low_res_imgs, training=True)
         fake_output = ProGAN.Discriminator(generated_imgs, training=False)
+
 
         # if >= 32 use vgg loss!
         true_fn = lambda: vgg_generator_loss(fake_output, high_res_imgs, generated_imgs)
@@ -301,6 +305,9 @@ def train_epoch(epoch, save_c):
         step = tf.convert_to_tensor(i, dtype=tf.int64)
         # data structured: dataset -> batch -> sample
         hr, lr = batch['image']
+
+        fk = ProGAN.Generator(lr).numpy()[0]
+        tf.print("avg pixel: {}".format(np.average(fk, axis=0)))
         gen_train_step(hr, lr, step)
 
     ## train discrim ##
