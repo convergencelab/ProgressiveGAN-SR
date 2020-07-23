@@ -46,7 +46,6 @@ print("SCP transfer at: {} from {}".format(local_dir, remote_dir))
 print("ctrl-C to end...")
 while True:
     sync()
-    # if new log, sync it instead of old.
     if len(glob.glob("../remote_logs/logs/gradient_tape/*")) > num_logs:
         logdir = max([os.path.basename(f) for f in glob.glob("../remote_logs/logs/gradient_tape/*")])
         print("serving tensorboard for {}".format(logdir))
