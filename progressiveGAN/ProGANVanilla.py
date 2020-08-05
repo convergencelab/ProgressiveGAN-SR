@@ -37,7 +37,7 @@ from Layers import *
 
 class Prog_Discriminator(Model):
     """
-    No normnalization according to paper.
+    No normalization according to paper.
 
     Critic -> WGAN-GP loss
     No clipping -> gradient penalty instead
@@ -65,7 +65,6 @@ class Prog_Discriminator(Model):
                                     padding='same',
                                     kernel_initializer='he_normal',
                                     name="input"
-                                    #kernel_constraint=self.clip_constraint
                                  )
         self.input_act = LeakyReLU(alpha=0.2)
         self.input_dnsmpl = AveragePooling2D()
@@ -78,15 +77,13 @@ class Prog_Discriminator(Model):
 
         # conv 3x3
 
-        self.conv1 = Conv2D(filters=512,
+        self.conv1 = Conv2DEQ(filters=512,
                             kernel_size=(3, 3),
                             padding='same',
                             kernel_initializer='he_normal',
-                            name="conv1"
-                            #kernel_constraint=self.clip_constraint
+                            name="conv"
                             )
         self.act1 = LeakyReLU(alpha=leakyrelu_alpha, name="act1")
-        # self.pixel_w_norm1 = PixelNormalization()
 
         # conv 4x4 (1x1 dims)
         self.conv2 = Conv2DEQ(  filters=512,
@@ -98,13 +95,11 @@ class Prog_Discriminator(Model):
                                 # kernel_constraint=self.clip_constraint
                             )
         self.act2 = LeakyReLU(alpha=leakyrelu_alpha, name="act2")
-        # self.pixel_w_norm2 = PixelNormalization()
-        # self.droput = tf.keras.layers.Dropout(0.3)
+
         # dense output layer
         self.flatten = Flatten(name="flatten")
         self.dense = Dense(1, name="dense")
 
-        #self.act3 = softmax
         # weighted output
         self.weighted_sum = WeightedSum(name="weighted_sum")
 
@@ -121,8 +116,7 @@ class Prog_Discriminator(Model):
         # insert new dis block to front of list
         self.dis_blocks.insert(0,
             dis_block(num_filters,
-                      decrease_filters,
-                      #self.clip_constraint
+                      decrease_filters
                       )
         )
 
@@ -194,15 +188,14 @@ class Prog_Generator(Model):
     paper applies pixelwise normalization after every 3x3 conv in gen...
     """
     def __init__(self,
-                 #clip_constraint,
                  leakyrelu_alpha=0.2,
                  LR_input_size=(4, 4, 3),
                  kernel_initializer='he_normal',
                  **kwargs
                  ):
+
         # call the parent constructor
         super(Prog_Generator, self).__init__(**kwargs)
-        # self.clip_constraint = ClipConstraint(clip_constraint)
         self.leakyrelu_alpha = leakyrelu_alpha
         self.LR_input_size = LR_input_size
         self.kernel_initializer = kernel_initializer
@@ -214,7 +207,6 @@ class Prog_Generator(Model):
         self.growth_phase = 0
 
         ### Construct base model ###
-        # input = Input(shape=self.LR_input_size)
         # conv 4x4, input block
         self.conv1 = Conv2DEQ(  filters=512,
                                 kernel_size=(4, 4),
@@ -222,17 +214,19 @@ class Prog_Generator(Model):
                                 kernel_initializer=self.kernel_initializer,
                                 #kernel_constraint=self.clip_constraint
                                 )
+
         self.act1 = LeakyReLU(alpha=self.leakyrelu_alpha)
 
         # conv 3x3, input block
         self.conv2 = Conv2DEQ(  filters=512,
                                 kernel_size=(3, 3),
                                 padding='same',
-                                kernel_initializer=self.kernel_initializer,
-                                #kernel_constraint=self.clip_constraint
+                                kernel_initializer=self.kernel_initializer
                             )
+
         self.act2 = LeakyReLU(alpha=self.leakyrelu_alpha)
         self.pixel_w_norm1 = PixelNormalization()
+
         # center to be filled with gen blocks
         self.gen_blocks = []
 
@@ -244,8 +238,7 @@ class Prog_Generator(Model):
         self.conv_last1 = Conv2DEQ(filters=16,
                                    kernel_size=(3, 3),
                                    padding='same',
-                                   kernel_initializer=self.kernel_initializer,
-                                   #kernel_constraint=self.clip_constraint
+                                   kernel_initializer=self.kernel_initializer
                                  )
         self.act_last1 = LeakyReLU(alpha=self.leakyrelu_alpha)
         self.pixel_w_norm2 = PixelNormalization()
@@ -254,11 +247,11 @@ class Prog_Generator(Model):
                                    filters=16,
                                    kernel_size=(3, 3),
                                    padding='same',
-                                   kernel_initializer=self.kernel_initializer,
-                                   #kernel_constraint=self.clip_constraint
+                                   kernel_initializer=self.kernel_initializer
                                  )
         self.act_last2 = LeakyReLU(alpha=self.leakyrelu_alpha)
         self.pixel_w_norm3 = PixelNormalization()
+
         # weighted sum for merging of outputs
         self.weighted_sum = WeightedSum()
         # conv 1x1, output block

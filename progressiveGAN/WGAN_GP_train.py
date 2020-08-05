@@ -19,14 +19,15 @@ Should be training critic several times more than generator,
 typical ratio is 5 critic updates:1 generator update
 """
 ### HYPERPARAMS ###
-batch_size = 16
-epochs = 256 # double for actually num iterations, as one epoch for fadein and one for straight pass
-dis_per_gen_ratio = 5# number of critic trains per gen train
-LAMBDA = 10# lambda for gradient penalty
+batch_size = tf.constant(16, name='batch_size', dtype=tf.int64)
+epochs = tf.constant(256, name='epochs', dtype=tf.int64) # double for actually num iterations, as one epoch for fadein and one for straight pass
+dis_per_gen_ratio = tf.constant(5, name='dis_per_gen_ratio', dtype=tf.int64) # number of critic trains per gen train
+LAMBDA = tf.constant(10, name='LAMBDA', dtype=tf.float32) # lambda for gradient penalty
+
 # image #
-UP_SAMPLE = 2 # factor for upsample
-START_INPUT_DIM = 16 # start with 4x4 input -> initialize with growth phase to 8x8 (so really 4)
-TARGET_DIM = 256 # full image size
+UP_SAMPLE = tf.constant(2, name='UP_SAMPLE', dtype=tf.int64) # factor for upsample
+START_INPUT_DIM = tf.constant(16, name='START_INPUT_DIM', dtype=tf.int64) # start with 4x4 input -> initialize with growth phase to 8x8 (so really 4)
+TARGET_DIM = tf.constant(256, name='TARGET_DIM', dtype=tf.int64) # full image size
 
 # Adam #
 # generator tends to take 4x less to train therefore two different learning rates:
@@ -73,8 +74,6 @@ def preprocess(img_dict, lr_dim, upscale_factor=UP_SAMPLE):
     img = img_dict['image']
     # resize and normalize
     img_dict['image'] = tf.image.resize(img, hr_dim)/255.0, tf.image.resize(img, lr_dim)/255.0
-
-
     return img_dict
 
 def prepare_and_upscale(lr_dim):
@@ -142,14 +141,14 @@ discrim_loss = tf.keras.losses.BinaryCrossentropy()
 
 ### adam optimizer for SGD ###
 gen_optimizer = tf.keras.optimizers.Adam(lr=gen_lr,
-                                     beta_1=beta_1,
-                                     beta_2=beta_2,
-                                     epsilon=epsilon)
+                                         beta_1=beta_1,
+                                         beta_2=beta_2,
+                                         epsilon=epsilon)
 
 dis_optimizer = tf.keras.optimizers.Adam(lr=dis_lr,
-                                     beta_1=beta_1,
-                                     beta_2=beta_2,
-                                     epsilon=epsilon)
+                                         beta_1=beta_1,
+                                         beta_2=beta_2,
+                                         epsilon=epsilon)
 
 # This method returns a helper function to compute cross entropy loss
 #cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
@@ -190,11 +189,23 @@ os.system("start /B start cmd.exe @cmd /c tensorboard --logdir={}".format('../lo
 
 ### Weights Dir ###
 if not os.path.isdir('../checkpoints'):
-    os.mkdir('../checkpoints')
+    os.mkdir('../../checkpoints')
 
+
+def gradient_penalty(generated_imgs, high_res_imgs):
+    # because using images not random noise, epsilon must represent the input image
+    epsilon = tf.random.uniform(generated_imgs.shape, 0.0, 1.0)
+    x_hat = epsilon * high_res_imgs + (1 - epsilon) * generated_imgs
+    with tf.GradientTape() as t:
+        t.watch(x_hat)
+        d_hat = ProGAN.Discriminator(x_hat)
+    gradients = t.gradient(d_hat, x_hat)
+    ddx = tf.sqrt(tf.reduce_sum(gradients ** 2, axis=[1, 2]))
+    d_regularizer = tf.reduce_mean((ddx - 1.0) ** 2)
+    return d_regularizer
 
 # critic loss for discriminator
-def discriminator_loss(real_output, fake_output):
+def discriminator_loss(generated_imgs, high_res_imgs, real_output, fake_output):
     #### fake - real
     ### larger discrim = smaller gen loss, etc...
     # must also incorporate gradient penalty
@@ -203,15 +214,9 @@ def discriminator_loss(real_output, fake_output):
     # input images and 1
     # intractable to evaluate every point, uses a handful of points
     # incorporate this into a layer
+    gp = gradient_penalty(generated_imgs, high_res_imgs)
 
-    interpolated_img = RandomWeightedAverage(batch_size)([real_output, fake_output])
-    # interpolated image pass
-    gradients = tf.gradients(ProGAN.Discriminator(interpolated_img), [interpolated_img])[0]
-    slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-    gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
-
-
-    return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output) + LAMBDA * gradient_penalty
+    return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output) + LAMBDA * gp
 
 
 # discrim loss + vgg loss
@@ -226,10 +231,8 @@ def vgg_generator_loss(dis_output, high_res_imgs, predictions):
     # return vgg loss + dicrim output
     return v_loss - tf.reduce_mean(dis_output)
 
-
 def generator_loss(dis_output):
     return -tf.reduce_mean(dis_output)
-
 
 @tf.function
 def dis_train_step(high_res_imgs, low_res_imgs, step):
@@ -241,7 +244,7 @@ def dis_train_step(high_res_imgs, low_res_imgs, step):
 
         #gp = gradient_penalty(batch_size, high_res_imgs, generated_imgs)
         # dis loss...
-        dis_loss = discriminator_loss(real_output, fake_output) #two passes : negative fake and regular real.
+        dis_loss = discriminator_loss(generated_imgs, high_res_imgs, real_output, fake_output) #two passes : negative fake and regular real.
 
         # apply loss
         dis_train_loss(dis_loss)
@@ -279,8 +282,7 @@ def gen_train_step(high_res_imgs, low_res_imgs, step):
 
         gradients_of_generator = gen_tape.gradient(gen_loss, ProGAN.Generator.trainable_variables)
         gen_optimizer.apply_gradients(zip(gradients_of_generator, ProGAN.Generator.trainable_variables))
-        # if epoch == 0 and step == 0:
-           #  ann_viz(ProGAN.Generator, title="My first neural network")
+
     # write to gen_train-log #
     with gen_train_summary_writer.as_default():
         tf.summary.scalar('gen_train_loss', gen_train_loss.result(), step=step)
@@ -293,7 +295,7 @@ def gen_train_step(high_res_imgs, low_res_imgs, step):
         tf.summary.image("low res", low_res_imgs, max_outputs=1, step=GROW_COUNT)
 
 
-def train_epoch(epoch, save_c):
+def train_epoch(epoch, save_c, train_mini_batch_wise=True):
     # Reset the metrics at the start of the next epoch
     gen_train_loss.reset_states()
     #gen_train_accuracy.reset_states()
@@ -304,46 +306,38 @@ def train_epoch(epoch, save_c):
     dis_train_accuracy.reset_states()
     dis_test_loss.reset_states()
     dis_test_accuracy.reset_states()
+    if train_mini_batch_wise: # alternate on mini batches
+        for i, batch in enumerate(train_ds):
+            step = tf.convert_to_tensor(i, dtype=tf.int64)
+            # data structured: dataset -> batch -> sample
+            hr, lr = batch['image']
+            if i % 5:# train dis 5 x per every gen step
+                dis_train_step(hr, lr, step)
+            else:
+                gen_train_step(hr, lr, step)
+                fk = ProGAN.Generator(lr).numpy()[0]
+                tf.print("avg pixel: {}".format(np.average(fk, axis=0)))
 
-    ## train gen ##
-    for i, batch in enumerate(train_ds):
-        step = tf.convert_to_tensor(i, dtype=tf.int64)
-        # data structured: dataset -> batch -> sample
-        hr, lr = batch['image']
-
-        fk = ProGAN.Generator(lr).numpy()[0]
-        tf.print("avg pixel: {}".format(np.average(fk, axis=0)))
-
-        tf.summary.trace_on(graph=True, profiler=True)
-        gen_train_step(hr, lr, step)
-        # write graph
-        with gen_graph_writer.as_default():
-            tf.summary.trace_export(
-                name="gen_graph_trace",
-                step=0,
-                profiler_outdir='../logs/gradient_tape/' + current_time + '/gen_graph')
-
-    ## train discrim ##
-    for i in range(dis_per_gen_ratio):
+    else:
+        ## train gen ##
         for i, batch in enumerate(train_ds):
             step = tf.convert_to_tensor(i, dtype=tf.int64)
             # data structured: dataset -> batch -> sample
             hr, lr = batch['image']
 
-            tf.summary.trace_on(graph=True, profiler=True)
-            dis_train_step(hr, lr, step)
-            # write graph
-            with dis_graph_writer.as_default():
-                tf.summary.trace_export(
-                    name="dis_graph_trace",
-                    step=0,
-                    profiler_outdir='../logs/gradient_tape/' + current_time + '/dis_graph')
+            fk = ProGAN.Generator(lr).numpy()[0]
+            tf.print("avg pixel: {}".format(np.average(fk, axis=0)))
+            gen_train_step(hr, lr, step)
 
-    # test #
-    #for i, batch in enumerate(test_ds):
-    #    step = tf.convert_to_tensor(i, dtype=tf.int64)
-    #    # get lr, hr batch tuple
-     #   hr, lr = batch['image']
+
+        ## train discrim ##
+        for i in range(dis_per_gen_ratio):
+            for i, batch in enumerate(train_ds):
+                step = tf.convert_to_tensor(i, dtype=tf.int64)
+                # data structured: dataset -> batch -> sample
+                hr, lr = batch['image']
+
+                dis_train_step(hr, lr, step)
 
     ### save weights ###
     if not epoch % NUM_CHECKPOINTS_DIV:
@@ -351,7 +345,8 @@ def train_epoch(epoch, save_c):
         save_c += 1
 
 # initialize input_dim
-input_dim = tf.convert_to_tensor(START_INPUT_DIM, dtype=tf.int64)
+
+input_dim = START_INPUT_DIM
 # save count for checkpoints #
 save_c = 0
 NUM_CHECKPOINTS_DIV = int(epochs/4)
@@ -372,6 +367,8 @@ while input_dim <= TARGET_DIM:
         ProGAN.set_alpha(1.0)
         for epoch in range(epochs):
             train_epoch(epoch, save_c=save_c)
+            print("break at 376")
+            break
     else:
         # all other growth phases fadein first.
         for epoch in range(epochs):

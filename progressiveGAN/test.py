@@ -249,3 +249,10 @@ for i, layer in enumerate(ProGAN.Generator._fadein_model.trainable_variables):
         break
         
 """
+
+"""
+Training Progressive GAN, 
+
+Should be training critic several times more than generator,
+typical ratio is 5 critic updates:1 generator update
+"""
